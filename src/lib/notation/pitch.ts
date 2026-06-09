@@ -1,0 +1,57 @@
+import type { Accidental, Clef, Pitch, Step } from "@/types/score"
+
+const STEP_ORDER: Step[] = ["C", "D", "E", "F", "G", "A", "B"]
+
+/** Sufixul de alterație în notația folosită de Tone.js (ex. "C#4", "Bb3") */
+const ACCIDENTAL_TO_TONE: Record<Accidental, string> = {
+  sharp: "#",
+  flat: "b",
+  natural: "", // fără armură, becarul nu schimbă înălțimea redată
+}
+
+/** Convertește o înălțime în numele de notă cerut de Tone.js, ex. "C#4" */
+export function pitchToToneNote(pitch: Pitch): string {
+  const accidental = pitch.accidental ? ACCIDENTAL_TO_TONE[pitch.accidental] : ""
+  return `${pitch.step}${accidental}${pitch.octave}`
+}
+
+/** Coboară o înălțime cu un pas diatonic (treaptă muzicală) */
+export function stepDown(pitch: Pitch): Pitch {
+  const idx = STEP_ORDER.indexOf(pitch.step)
+  if (idx === 0) return { step: "B", octave: pitch.octave - 1 }
+  return { step: STEP_ORDER[idx - 1], octave: pitch.octave }
+}
+
+/** Urcă o înălțime cu un pas diatonic (treaptă muzicală) */
+export function stepUp(pitch: Pitch): Pitch {
+  const idx = STEP_ORDER.indexOf(pitch.step)
+  if (idx === STEP_ORDER.length - 1) return { step: "C", octave: pitch.octave + 1 }
+  return { step: STEP_ORDER[idx + 1], octave: pitch.octave }
+}
+
+/** Convertește o înălțime în formatul de cheie folosit de VexFlow, ex. "c/4" */
+export function pitchToVexflowKey(pitch: Pitch): string {
+  return `${pitch.step.toLowerCase()}/${pitch.octave}`
+}
+
+/**
+ * Înălțimea liniei de sus a portativului, pentru fiecare cheie. Pornind de
+ * acolo în jos, fiecare linie/spațiu e cu o treaptă diatonică mai jos —
+ * construim o listă de "poziții" indexabilă direct după coordonata Y a unui click.
+ *  - cheie sol (treble): linia de sus = F5
+ *  - cheie fa (bass):    linia de sus = A3
+ *  - cheie do (alto):    linia de sus = G4
+ */
+export const TOP_LINE_PITCH: Record<Clef, Pitch> = {
+  treble: { step: "F", octave: 5 },
+  bass: { step: "A", octave: 3 },
+  alto: { step: "G", octave: 4 },
+}
+
+export function buildStaffPositions(count: number, top: Pitch): Pitch[] {
+  const positions: Pitch[] = [top]
+  for (let i = 1; i < count; i++) {
+    positions.push(stepDown(positions[i - 1]))
+  }
+  return positions
+}
