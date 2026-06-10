@@ -1,14 +1,31 @@
-import { useCallback, useEffect, useRef } from "react"
-import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Articulation, Curve } from "vexflow"
+import { useCallback, useEffect, useRef, useState } from "react"
+import {
+  Renderer,
+  Stave,
+  StaveNote,
+  Voice,
+  Formatter,
+  Accidental,
+  Articulation,
+  Beam,
+  Curve,
+  Dot,
+  Fraction,
+  StaveConnector,
+} from "vexflow"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { DEFAULT_PITCH } from "@/state/scoreReducer"
 import { buildStaffPositions, pitchToVexflowKey, TOP_LINE_PITCH } from "@/lib/notation/pitch"
-import { DURATION_BEATS, DURATION_HOTKEYS, REST_HOTKEYS, vexflowDurationCode } from "@/lib/notation/duration"
+import { DURATION_HOTKEYS, REST_HOTKEYS, vexflowDurationCode } from "@/lib/notation/duration"
+import { splitIntoMeasures } from "@/lib/notation/measure"
 import { ACCIDENTAL_HOTKEYS, ACCIDENTAL_TO_VEXFLOW } from "@/lib/notation/accidental"
 import { ARTICULATION_TO_VEXFLOW } from "@/lib/notation/articulation"
 import { keyAccidentalCount } from "@/lib/notation/keySignature"
+import { instrumentLabel } from "@/lib/notation/instrument"
+import { onPlaybackHighlight } from "@/lib/audio/playbackHighlight"
+import { auditionPitches } from "@/lib/audio/audition"
 import { measureQuarters, timeSignatureLabel } from "@/lib/notation/timeSignature"
-import type { Clef, Pitch } from "@/types/score"
+import type { Clef, Pitch, Step } from "@/types/score"
 
 const INK_COLOR = "#e8dcc8"
 const ACCENT_COLOR = "#c9a96e"
@@ -66,7 +83,9 @@ function yToPitch(y: number, stave: Stave, clef: Clef): Pitch {
   const stepSpacing = (bottomY - topY) / 8
   const positions = STAFF_POSITIONS[clef]
   let index = Math.round((y - topY) / stepSpacing)
-  index = Math.max(0, Math.min(positions.length - 1, index))
+  // doar treptele de pe portativ (linia de sus … linia de jos) — notele de
+  // deasupra/dedesubt se obțin apoi cu ↑/↓ (click-ul e limitat la portativ)
+  index = Math.max(0, Math.min(8, Math.min(positions.length - 1, index)))
   return positions[index]
 }
 
@@ -77,41 +96,10 @@ const KEY_ACCIDENTAL_WIDTH = 9 // spațiu rezervat pentru fiecare alterație din
 const LEFT_MARGIN = 20
 const LABEL_WIDTH = 64 // gutter în stânga pentru numele instrumentelor
 const STAFF_ROW_HEIGHT = 84 // înălțimea verticală a unui portativ într-un sistem
+const GRAND_STAFF_GAP = 72 // spațiu mai mic între portativele aceluiași instrument (pian)
 const SYSTEM_GAP = 36 // spațiu între sisteme (rânduri)
 const TOP_MARGIN = 36
 const BOTTOM_MARGIN = 30
-
-/** Împarte notele unui portativ în măsuri (liste de indici în `notes`), pe baza
- *  duratelor și a lungimii măsurii (`beatsPerMeasure`, în pătrimi) */
-function splitIntoMeasures(notes: { duration: keyof typeof DURATION_BEATS }[], beatsPerMeasure: number): number[][] {
-  const measures: number[][] = []
-  let current: number[] = []
-  let beats = 0
-
-  notes.forEach((entry, i) => {
-    const entryBeats = DURATION_BEATS[entry.duration]
-    if (current.length > 0 && beats + entryBeats > beatsPerMeasure + 1e-9) {
-      measures.push(current)
-      current = []
-      beats = 0
-    }
-    current.push(i)
-    beats += entryBeats
-    if (beats >= beatsPerMeasure - 1e-9) {
-      measures.push(current)
-      current = []
-      beats = 0
-    }
-  })
-  if (current.length > 0) measures.push(current)
-  if (measures.length === 0) measures.push([])
-  return measures
-}
-
-/** Numele scurt al instrumentului, pentru eticheta din stânga portativului */
-function shortLabel(instrument: string): string {
-  return instrument.length > 9 ? `${instrument.slice(0, 8)}…` : instrument
-}
 
 /** Găsește cel mai apropiat strămoș care derulează (overflow-y auto/scroll) */
 function findScrollParent(el: HTMLElement | null): HTMLElement | null {
@@ -126,7 +114,26 @@ function findScrollParent(el: HTMLElement | null): HTMLElement | null {
   return null
 }
 
-type StaffRow = { staffId: string; clef: Clef; stave: Stave; topY: number; bottomY: number }
+type StaffRow = {
+  staffId: string
+  clef: Clef
+  stave: Stave
+  topY: number
+  bottomY: number
+  systemIndex: number
+}
+
+/** Literele care introduc note în modul de introducere (N), ca în MuseScore */
+const NOTE_KEYS: Record<string, Step> = { c: "C", d: "D", e: "E", f: "F", g: "G", a: "A", b: "B" }
+
+/** Cifrele 1–5 aleg durata în modul de introducere (literele sunt ocupate de note) */
+const DIGIT_DURATIONS: Record<string, "whole" | "half" | "quarter" | "eighth" | "sixteenth"> = {
+  "1": "whole",
+  "2": "half",
+  "3": "quarter",
+  "4": "eighth",
+  "5": "sixteenth",
+}
 
 /**
  * Portativ interactiv multi-instrument: randează toate portativele din starea
@@ -138,23 +145,51 @@ type StaffRow = { staffId: string; clef: Clef; stave: Stave; topY: number; botto
  */
 export function InteractiveStave() {
   const containerRef = useRef<HTMLDivElement>(null)
-  const { staves, activeStaffId, selectedStaffIds, timeSignature, selectedId, dispatch } = useScoreEditor()
+  const {
+    staves,
+    activeStaffId,
+    selectedStaffIds,
+    timeSignature,
+    selectedId,
+    selectedPitchIndex,
+    selectedDuration,
+    viewMode,
+    dispatch,
+  } = useScoreEditor()
+  // modul de introducere a notelor din tastatură (comutat cu N, ca în MuseScore)
+  const [noteInputMode, setNoteInputMode] = useState(false)
+
+  // elementele SVG ale notelor randate, pe id — folosite de evidențierea din
+  // timpul redării ca să recoloreze direct nota curentă, fără re-randare React
+  const svgNoteElsRef = useRef<Map<string, SVGElement>>(new Map())
+  // atributele originale ale elementelor recolorate, ca să le putem restaura exact
+  const highlightRestoreRef = useRef<{ el: Element; fill: string | null; stroke: string | null }[]>([])
+
+  // --- cursorul vertical de redare (alunecă de la nota curentă spre următoarea) ---
+  // poziția fiecărei note: x absolut, rândul (sistemul) și nota următoare din portativ
+  const noteMetaRef = useRef<Map<string, { x: number; systemIndex: number; nextId: string | null }>>(new Map())
+  // geometria rândurilor (top/bottom pe Y) și marginea dreaptă a conținutului
+  const cursorLayoutRef = useRef<{ systems: { top: number; bottom: number }[]; rightEdge: number } | null>(null)
+  const cursorElRef = useRef<SVGRectElement | null>(null)
+  const cursorAnimRef = useRef<number | null>(null)
+  // ultimul rând pe care a fost cursorul — auto-scroll doar la schimbarea rândului
+  const cursorSystemRef = useRef(-1)
 
   const draw = useCallback(() => {
     const container = containerRef.current
     if (!container) return
 
     // golirea containerului (mai jos) colapsează înălțimea la 0, ceea ce face
-    // browserul să "prindă" scroll-ul strămoșului la 0; salvăm poziția și o
-    // restaurăm la final, ca pagina să nu sară sus la fiecare redesenare
+    // browserul să "prindă" scroll-ul strămoșului la 0; salvăm pozițiile și le
+    // restaurăm la final, ca pagina să nu sară la fiecare redesenare
+    // (containerul însuși e derulorul orizontal, în vizualizarea continuă)
     const scroller = findScrollParent(container)
     const savedScrollTop = scroller?.scrollTop ?? 0
+    const savedScrollLeft = container.scrollLeft
 
     container.innerHTML = ""
 
-    const width = Math.max(container.clientWidth || 0, 420)
     const contentLeft = LEFT_MARGIN + LABEL_WIDTH
-    const availableWidth = width - contentLeft - LEFT_MARGIN
 
     // armura e per portativ, dar rezervăm același spațiu de antet pe toate
     // (= cea mai lată armură), ca barele de măsură să rămână aliniate vertical
@@ -172,9 +207,45 @@ export function InteractiveStave() {
       measureCount = Math.max(measureCount, measures.length)
     }
 
-    const measuresPerSystem = Math.max(1, Math.floor((availableWidth - headerWidth) / MEASURE_WIDTH))
+    // lățimi și rupere pe rânduri, după modul de vizualizare:
+    //  - "page": lățimea = containerul; măsurile se rup pe rânduri și se justifică
+    //  - "continuous": un singur rând cu măsuri de lățime fixă; SVG-ul devine
+    //    oricât de lat e conținutul, iar containerul derulează orizontal
+    let width: number
+    let availableWidth: number
+    let measuresPerSystem: number
+    if (viewMode === "continuous") {
+      measuresPerSystem = measureCount
+      // cu availableWidth = antet + n × lățime fixă, formula de "justificare"
+      // de mai jos dă exact MEASURE_WIDTH — restul codului rămâne neschimbat
+      availableWidth = headerWidth + measureCount * MEASURE_WIDTH
+      width = contentLeft + availableWidth + LEFT_MARGIN
+    } else {
+      width = Math.max(container.clientWidth || 0, 420)
+      availableWidth = width - contentLeft - LEFT_MARGIN
+      measuresPerSystem = Math.max(1, Math.floor((availableWidth - headerWidth) / MEASURE_WIDTH))
+    }
     const systemCount = Math.max(1, Math.ceil(measureCount / measuresPerSystem))
-    const systemHeight = staves.length * STAFF_ROW_HEIGHT + SYSTEM_GAP
+
+    // grupuri (instrumente): pentru fiecare portativ, indicii portativelor din
+    // același grup (pian = 2). Portativele aceluiași grup stau mai apropiate.
+    const groupMembers: number[][] = staves.map((staff, i) =>
+      staff.groupId ? staves.flatMap((s, j) => (s.groupId === staff.groupId ? [j] : [])) : [i],
+    )
+    // înălțimea pe care o ocupă fiecare portativ (mai mică în interiorul unui grup)
+    const staffSpan: number[] = staves.map((staff, i) => {
+      const next = staves[i + 1]
+      const tight = !!next && !!staff.groupId && next.groupId === staff.groupId
+      return tight ? GRAND_STAFF_GAP : STAFF_ROW_HEIGHT
+    })
+    // offset-ul vertical al fiecărui portativ în cadrul unui sistem
+    const staffOffsets: number[] = []
+    staffSpan.reduce((acc, span, i) => {
+      staffOffsets[i] = acc
+      return acc + span
+    }, 0)
+    const innerHeight = staffSpan.reduce((a, b) => a + b, 0)
+    const systemHeight = innerHeight + SYSTEM_GAP
     const height = TOP_MARGIN + systemCount * systemHeight + BOTTOM_MARGIN
 
     const renderer = new Renderer(container, Renderer.Backends.SVG)
@@ -194,8 +265,16 @@ export function InteractiveStave() {
 
     const staveGradient = `url(#${STAVE_GRADIENT_ID})`
     const noteIdToStaveNote = new Map<string, StaveNote>()
-    const renderedNotes: { id: string; staffId: string; staveNote: StaveNote }[] = []
+    const renderedNotes: {
+      id: string
+      staffId: string
+      staveNote: StaveNote
+      systemIndex: number
+      isRest: boolean
+    }[] = []
     const rows: StaffRow[] = []
+    // geometria rândurilor, pentru cursorul de redare (înălțimea lui pe fiecare rând)
+    const systemBounds: { top: number; bottom: number }[] = []
 
     for (let systemIndex = 0; systemIndex < systemCount; systemIndex++) {
       const measureStart = systemIndex * measuresPerSystem
@@ -203,9 +282,12 @@ export function InteractiveStave() {
       // "justificăm" rândul: lățimea măsurilor umple toată lățimea disponibilă
       const stretchedMeasureWidth = (availableWidth - headerWidth) / measuresInRow
       const systemTop = TOP_MARGIN + systemIndex * systemHeight
+      systemBounds.push({ top: systemTop, bottom: systemTop + innerHeight })
+      // prima măsură (col 0) a fiecărui portativ din sistem — pentru acolade
+      const systemFirstStaves: (Stave | null)[] = []
 
       staves.forEach((staff, staffIndex) => {
-        const staffY = systemTop + staffIndex * STAFF_ROW_HEIGHT
+        const staffY = systemTop + staffOffsets[staffIndex]
         const measures = staffMeasures.get(staff.id) ?? [[]]
         // bifat pentru redare parțială (Ctrl+click) — evidențiat printr-o bandă
         const inPlayback = selectedStaffIds.includes(staff.id)
@@ -241,33 +323,73 @@ export function InteractiveStave() {
           context.setStrokeStyle(INK_COLOR)
           context.setFillStyle(INK_COLOR)
 
+          // mică margine între antet (cheie/armură/măsură) și prima notă —
+          // altfel nu există loc de click pentru a insera ÎNAINTEA primei note
+          if (isFirstOfSystem) {
+            stave.setNoteStartX(stave.getNoteStartX() + 16)
+          }
+
           const measureNoteIndices = measures[measureIndex]
           if (measureNoteIndices && measureNoteIndices.length > 0) {
             const staveNotes = measureNoteIndices.map((noteIndex) => {
               const entry = staff.notes[noteIndex]
               const isRest = entry.type === "rest"
+              // o intrare poate avea mai multe înălțimi (acord) — toate pe același StaveNote
+              const pitches = isRest ? [DEFAULT_PITCH] : entry.pitches
               const staveNote = new StaveNote({
                 clef: staff.clef,
-                keys: [pitchToVexflowKey(isRest ? DEFAULT_PITCH : entry.pitch)],
+                keys: pitches.map(pitchToVexflowKey),
                 duration: vexflowDurationCode(entry.duration, isRest),
               })
-              if (!isRest && entry.pitch.accidental) {
-                staveNote.addModifier(new Accidental(ACCIDENTAL_TO_VEXFLOW[entry.pitch.accidental]), 0)
+              if (!isRest) {
+                entry.pitches.forEach((pitch, pitchIdx) => {
+                  if (pitch.accidental) {
+                    staveNote.addModifier(new Accidental(ACCIDENTAL_TO_VEXFLOW[pitch.accidental]), pitchIdx)
+                  }
+                })
               }
               if (!isRest && entry.articulations) {
                 entry.articulations.forEach((articulation) => {
                   staveNote.addModifier(new Articulation(ARTICULATION_TO_VEXFLOW[articulation]), 0)
                 })
               }
+              // punctul de prelungire — desenat lângă capul notei (nu deasupra,
+              // ca staccato, care e articulație)
+              if (entry.dotted) {
+                Dot.buildAndAttach([staveNote], { all: true })
+              }
               const isSelected = entry.id === selectedId
-              staveNote.setStyle({
-                fillStyle: isSelected ? ACCENT_COLOR : INK_COLOR,
-                strokeStyle: isSelected ? ACCENT_COLOR : INK_COLOR,
-              })
+              // cu o înălțime selectată dintr-un ACORD, doar capul ei e auriu
+              // (nota simplă rămâne aurie integral, cu tot cu codiță)
+              const headOnly = isSelected && selectedPitchIndex !== null && !isRest && entry.pitches.length > 1
+              const noteColor = isSelected && !headOnly ? ACCENT_COLOR : INK_COLOR
+              staveNote.setStyle({ fillStyle: noteColor, strokeStyle: noteColor })
+              if (headOnly) {
+                // ATENȚIE: la codița în jos, VexFlow construiește capetele în
+                // ordine inversă — mapăm prin rangul liniei (linia crește cu
+                // înălțimea), nu prin indicele din `noteHeads`
+                const byLine = staveNote.noteHeads
+                  .map((head, headIdx) => ({ headIdx, line: head.getLine() }))
+                  .sort((a, b) => a.line - b.line)
+                const headIdx = byLine[selectedPitchIndex]?.headIdx
+                if (headIdx !== undefined) {
+                  staveNote.noteHeads[headIdx]?.setStyle({
+                    fillStyle: ACCENT_COLOR,
+                    strokeStyle: ACCENT_COLOR,
+                  })
+                }
+              }
               noteIdToStaveNote.set(entry.id, staveNote)
-              renderedNotes.push({ id: entry.id, staffId: staff.id, staveNote })
+              renderedNotes.push({ id: entry.id, staffId: staff.id, staveNote, systemIndex, isRest })
               return staveNote
             })
+
+            // optimile/șaisprezecimile consecutive se grupează cu bară (beam),
+            // ca în notația tipărită; în măsurile cu numitor 8 (6/8, 3/8) se
+            // grupează câte trei optimi, altfel pe timpi de pătrime (implicit)
+            const beamGroups = timeSignature.denominator === 8 ? [new Fraction(3, 8)] : undefined
+            const beams = Beam.generateBeams(staveNotes, beamGroups ? { groups: beamGroups } : undefined)
+            beams.forEach((beam) => beam.setStyle({ fillStyle: INK_COLOR, strokeStyle: INK_COLOR }))
 
             const voice = new Voice({ numBeats: timeSignature.numerator, beatValue: timeSignature.denominator })
             voice.setStrict(false)
@@ -275,25 +397,55 @@ export function InteractiveStave() {
             const formatWidth = measureWidth - (isFirstOfSystem ? headerWidth + 30 : 30)
             new Formatter().joinVoices([voice]).format([voice], Math.max(formatWidth, 40))
             voice.draw(context, stave)
+            beams.forEach((beam) => beam.setContext(context).draw())
           }
 
           x += measureWidth
         }
 
-        // eticheta cu numele instrumentului, în stânga; activ sau bifat — auriu
         const labelStave = firstStaveOfRow
         if (labelStave) {
-          context.setFillStyle(staff.id === activeStaffId || inPlayback ? ACCENT_COLOR : INK_COLOR)
-          context.fillText(shortLabel(staff.instrument), LEFT_MARGIN, staffY + 26)
-          context.setFillStyle(INK_COLOR)
+          systemFirstStaves[staffIndex] = labelStave
+
+          // numele instrumentului se scrie o singură dată pe grup, centrat
+          // vertical între portativele lui (pentru pian — între cheie sol și fa)
+          const members = groupMembers[staffIndex]
+          if (members[0] === staffIndex) {
+            const firstY = systemTop + staffOffsets[members[0]]
+            const lastY = systemTop + staffOffsets[members[members.length - 1]]
+            const groupActive = members.some((j) => staves[j].id === activeStaffId)
+            const groupInPlayback = members.some((j) => selectedStaffIds.includes(staves[j].id))
+            context.setFillStyle(groupActive || groupInPlayback ? ACCENT_COLOR : INK_COLOR)
+            context.fillText(instrumentLabel(staff.instrument), LEFT_MARGIN, (firstY + lastY) / 2 + 26)
+            context.setFillStyle(INK_COLOR)
+          }
+
+          // zona de click = strict liniile portativului (cu o mică margine) —
+          // între portative (mai ales la pian) click-ul nu face nimic, iar
+          // notele de deasupra/dedesubt se obțin cu ↑/↓ după adăugare
           rows.push({
             staffId: staff.id,
             clef: staff.clef,
             stave: labelStave,
-            topY: staffY,
-            bottomY: staffY + STAFF_ROW_HEIGHT,
+            topY: labelStave.getYForLine(0),
+            bottomY: labelStave.getYForLine(4),
+            systemIndex,
           })
         }
+      })
+
+      // acolade pentru instrumentele cu portativ dublu (pian/orgă): legăm primul
+      // și ultimul portativ al fiecărui grup printr-o acoladă + linie verticală
+      context.setStrokeStyle(INK_COLOR)
+      context.setFillStyle(INK_COLOR)
+      staves.forEach((_, staffIndex) => {
+        const members = groupMembers[staffIndex]
+        if (members.length < 2 || members[0] !== staffIndex) return
+        const top = systemFirstStaves[members[0]]
+        const bottom = systemFirstStaves[members[members.length - 1]]
+        if (!top || !bottom) return
+        new StaveConnector(top, bottom).setType("brace").setContext(context).draw()
+        new StaveConnector(top, bottom).setType("singleLeft").setContext(context).draw()
       })
     }
 
@@ -309,19 +461,86 @@ export function InteractiveStave() {
       })
     })
 
-    // click pe o notă -> o selectăm; Ctrl/Cmd+click -> bifează portativul ei
-    // pentru redare parțială (folosim elementul SVG propriu fiecărei note)
-    renderedNotes.forEach(({ id, staffId, staveNote }) => {
+    // după re-randare, vechile elemente SVG nu mai există — golim hărțile
+    // folosite de evidențierea din timpul redării și oprim animația cursorului
+    svgNoteElsRef.current = new Map()
+    highlightRestoreRef.current = []
+    if (cursorAnimRef.current !== null) {
+      cancelAnimationFrame(cursorAnimRef.current)
+      cursorAnimRef.current = null
+    }
+
+    // pozițiile notelor pentru cursorul de redare: x absolut (după formatare),
+    // rândul și nota următoare din același portativ (ținta alunecării)
+    const noteMeta = new Map<string, { x: number; systemIndex: number; nextId: string | null }>()
+    renderedNotes.forEach(({ id, staveNote, systemIndex }) => {
+      noteMeta.set(id, { x: staveNote.getAbsoluteX(), systemIndex, nextId: null })
+    })
+    staves.forEach((staff) => {
+      staff.notes.forEach((entry, i) => {
+        const meta = noteMeta.get(entry.id)
+        const next = staff.notes[i + 1]
+        if (meta && next) meta.nextId = next.id
+      })
+    })
+    noteMetaRef.current = noteMeta
+    cursorLayoutRef.current = { systems: systemBounds, rightEdge: contentLeft + availableWidth }
+
+    // cursorul propriu-zis: un dreptunghi subțire, invizibil până la redare
+    if (svgEl) {
+      const cursor = document.createElementNS(SVG_NS, "rect") as SVGRectElement
+      cursor.setAttribute("width", "2")
+      cursor.setAttribute("fill", ACCENT_COLOR)
+      cursor.setAttribute("opacity", "0.6")
+      cursor.setAttribute("visibility", "hidden")
+      cursor.setAttribute("pointer-events", "none")
+      svgEl.appendChild(cursor)
+      cursorElRef.current = cursor
+    }
+
+    // Selecția notelor se face prin hit-testing pe coordonate (un singur handler
+    // pe SVG), nu prin pointer-events pe elemente — hitbox exact, de mărimea
+    // glyph-ului, fără capriciile bbox-urilor SVG (grupul unei note e cât tot
+    // portativul pe verticală). Colectăm centrul fiecărui cap de notă/pauză:
+    const noteHits: {
+      id: string
+      staffId: string
+      pitchIndex?: number
+      x: number
+      y: number
+      halfW: number
+      halfH: number
+    }[] = []
+    renderedNotes.forEach(({ id, staffId, staveNote, isRest }) => {
       const el = staveNote.getSVGElement()
-      if (!el) return
-      el.style.cursor = "pointer"
-      el.addEventListener("click", (event) => {
-        event.stopPropagation()
-        if (event.ctrlKey || event.metaKey) {
-          dispatch({ type: "toggleStaffSelection", staffId })
-        } else {
-          dispatch({ type: "selectNote", id })
-        }
+      if (el) {
+        svgNoteElsRef.current.set(id, el)
+        // grupul notei nu interceptează click-uri — totul trece prin handler-ul SVG
+        el.style.pointerEvents = "none"
+      }
+      // poziția reală a fiecărui cap = bbox-ul GLYPH-ului din DOM (primul copil
+      // al grupului): VexFlow desenează modificatorii (punct, alterații,
+      // articulații) ÎN INTERIORUL grupului de cap, deci bbox-ul grupului se
+      // umflă mult peste glyph și ar prinde click-uri dintre portative
+      const heads = staveNote.noteHeads
+        .map((head) => head.getSVGElement())
+        .filter((headEl): headEl is SVGGraphicsElement => !!headEl && "getBBox" in headEl)
+        .map((headEl) => {
+          const glyph = headEl.firstElementChild
+          const box = (glyph && "getBBox" in glyph ? (glyph as SVGGraphicsElement) : headEl).getBBox()
+          return {
+            x: box.x + box.width / 2,
+            y: box.y + box.height / 2,
+            // plafonate — capul unei note nu depășește ~o treaptă și jumătate
+            halfW: Math.min(box.width / 2, 8),
+            halfH: Math.min(box.height / 2, 6),
+          }
+        })
+      // sortăm descrescător după y (y mic = sus = înălțime mare) ca indicele
+      // să corespundă cu `pitches` (ascendent) indiferent de direcția codiței
+      heads.sort((a, b) => b.y - a.y)
+      heads.forEach((head, pitchIdx) => {
+        noteHits.push({ id, staffId, pitchIndex: isRest ? undefined : pitchIdx, ...head })
       })
     })
 
@@ -333,8 +552,30 @@ export function InteractiveStave() {
         const clickX = event.clientX - rect.left
         const clickY = event.clientY - rect.top
 
-        const row = rows.find((r) => clickY >= r.topY - 18 && clickY <= r.bottomY)
-        if (!row) return
+        // ±8px ≈ o treaptă și jumătate în jurul liniilor — suficient cât să nu
+        // fie frustrant de precis, dar fără să se suprapună cu portativul vecin
+        const row = rows.find((r) => clickY >= r.topY - 8 && clickY <= r.bottomY + 8)
+
+        // în afara liniilor portativului, singurele ținte sunt capetele de notă
+        // cu linii suplimentare (deasupra/dedesubt) — hit pe bbox-ul glyph-ului
+        if (!row) {
+          const headHit = noteHits
+            .filter(
+              (h) =>
+                Math.abs(h.x - clickX) <= h.halfW + 3 && Math.abs(h.y - clickY) <= h.halfH + 2,
+            )
+            .sort(
+              (a, b) =>
+                Math.hypot(a.x - clickX, a.y - clickY) - Math.hypot(b.x - clickX, b.y - clickY),
+            )[0]
+          if (!headHit) return
+          if (event.ctrlKey || event.metaKey) {
+            dispatch({ type: "toggleStaffSelection", staffId: headHit.staffId })
+          } else {
+            dispatch({ type: "selectNote", id: headHit.id, pitchIndex: headHit.pitchIndex })
+          }
+          return
+        }
 
         if (event.ctrlKey || event.metaKey) {
           dispatch({ type: "toggleStaffSelection", staffId: row.staffId })
@@ -345,15 +586,57 @@ export function InteractiveStave() {
         if (clickX < contentLeft + headerWidth) return
 
         const pitch = yToPitch(clickY, row.stave, row.clef)
-        dispatch({ type: "addNoteAtPitch", staffId: row.staffId, pitch })
+
+        // pe coloana unei note existente, decizia se ia după treapta quantizată
+        // a click-ului (precis pe grila portativului, fără toleranțe de bbox):
+        //  - treaptă pe care nota o ARE deja -> selectăm exact acel cap
+        //  - treaptă nouă -> o adăugăm la acord
+        //  - pauză -> o selectăm
+        const columnTarget = renderedNotes.find(
+          (rn) => rn.staffId === row.staffId && Math.abs(rn.staveNote.getAbsoluteX() - clickX) < 12,
+        )
+        if (columnTarget) {
+          const entry = staves
+            .find((s) => s.id === row.staffId)
+            ?.notes.find((n) => n.id === columnTarget.id)
+          if (entry) {
+            if (entry.type === "rest") {
+              dispatch({ type: "selectNote", id: entry.id })
+              return
+            }
+            const pitchIdx = entry.pitches.findIndex(
+              (p) => p.step === pitch.step && p.octave === pitch.octave,
+            )
+            if (pitchIdx >= 0) {
+              dispatch({ type: "selectNote", id: entry.id, pitchIndex: pitchIdx })
+            } else {
+              dispatch({ type: "addPitchToNote", noteId: entry.id, pitch })
+            }
+            return
+          }
+        }
+
+        // inserăm la poziția orizontală a click-ului: înaintea primei note aflate
+        // la dreapta lui (comparat pe rând + x, fiindcă x se repetă pe rânduri);
+        // fără una, nota se adaugă la final
+        const insertBefore = renderedNotes.find(
+          (rn) =>
+            rn.staffId === row.staffId &&
+            (rn.systemIndex > row.systemIndex ||
+              (rn.systemIndex === row.systemIndex && rn.staveNote.getAbsoluteX() > clickX + 12)),
+        )
+        dispatch({ type: "addNoteAtPitch", staffId: row.staffId, pitch, beforeId: insertBefore?.id })
       })
     }
 
-    // restaurăm poziția de scroll salvată înainte de redesenare (vezi mai sus)
+    // restaurăm pozițiile de scroll salvate înainte de redesenare (vezi mai sus)
     if (scroller && scroller.scrollTop !== savedScrollTop) {
       scroller.scrollTop = savedScrollTop
     }
-  }, [staves, activeStaffId, selectedStaffIds, timeSignature, selectedId, dispatch])
+    if (container.scrollLeft !== savedScrollLeft) {
+      container.scrollLeft = savedScrollLeft
+    }
+  }, [staves, activeStaffId, selectedStaffIds, timeSignature, selectedId, selectedPitchIndex, viewMode, dispatch])
 
   useEffect(() => {
     draw()
@@ -363,6 +646,131 @@ export function InteractiveStave() {
     observer.observe(container)
     return () => observer.disconnect()
   }, [draw])
+
+  // evidențierea notei curente în timpul redării: recolorăm direct elementele
+  // SVG ale notei și mișcăm cursorul vertical — fără dispatch / re-randare React
+  // (vezi lib/audio/playbackHighlight)
+  useEffect(() => {
+    const unsubscribe = onPlaybackHighlight((noteId, durationSeconds) => {
+      // restaurăm exact atributele notei evidențiate anterior
+      for (const { el, fill, stroke } of highlightRestoreRef.current) {
+        if (fill === null) el.removeAttribute("fill")
+        else el.setAttribute("fill", fill)
+        if (stroke === null) el.removeAttribute("stroke")
+        else el.setAttribute("stroke", stroke)
+      }
+      highlightRestoreRef.current = []
+
+      // oprim alunecarea curentă — fie repornim spre noua țintă, fie ascundem
+      if (cursorAnimRef.current !== null) {
+        cancelAnimationFrame(cursorAnimRef.current)
+        cursorAnimRef.current = null
+      }
+
+      const cursor = cursorElRef.current
+      if (noteId === null) {
+        cursor?.setAttribute("visibility", "hidden")
+        cursorSystemRef.current = -1
+        return
+      }
+
+      const group = svgNoteElsRef.current.get(noteId)
+      if (group) {
+        // recolorăm doar elementele care chiar au fill/stroke (păstrăm "none")
+        const targets: Element[] = [group, ...group.querySelectorAll("*")]
+        for (const el of targets) {
+          const fill = el.getAttribute("fill")
+          const stroke = el.getAttribute("stroke")
+          const paintsFill = fill !== null && fill !== "none"
+          const paintsStroke = stroke !== null && stroke !== "none"
+          if (!paintsFill && !paintsStroke) continue
+          highlightRestoreRef.current.push({ el, fill, stroke })
+          if (paintsFill) el.setAttribute("fill", ACCENT_COLOR)
+          if (paintsStroke) el.setAttribute("stroke", ACCENT_COLOR)
+        }
+      }
+
+      // --- cursorul vertical: poziționare + alunecare spre nota următoare ---
+      const meta = noteMetaRef.current.get(noteId)
+      const layout = cursorLayoutRef.current
+      if (!cursor || !meta || !layout) return
+      const system = layout.systems[meta.systemIndex]
+      if (!system) return
+
+      cursor.setAttribute("y", String(system.top))
+      cursor.setAttribute("height", String(system.bottom - system.top))
+      cursor.setAttribute("x", String(meta.x))
+      cursor.setAttribute("visibility", "visible")
+
+      // la schimbarea rândului, centrăm rândul curent în fereastră — scroll-ul
+      // urmărește bara în jos prin pagină, rând cu rând
+      if (cursorSystemRef.current !== meta.systemIndex) {
+        cursorSystemRef.current = meta.systemIndex
+        cursor.scrollIntoView({ block: "center", behavior: "smooth" })
+      }
+
+      // în vizualizarea continuă containerul derulează orizontal: ținem cursorul
+      // "ancorat" spre stânga ferestrei și derulăm continuu odată cu el, cadru cu
+      // cadru (panoramare ca în MuseScore); în modul pagină e no-op (nu există
+      // depășire orizontală)
+      const followCursorH = (x: number) => {
+        const hScroller = containerRef.current
+        if (!hScroller || hScroller.scrollWidth <= hScroller.clientWidth) return
+        const anchor = Math.min(200, hScroller.clientWidth / 3)
+        hScroller.scrollLeft = Math.max(0, x - anchor)
+      }
+      followCursorH(meta.x)
+
+      // ținta alunecării: nota următoare de pe același rând; dacă următoarea e
+      // pe alt rând, alunecăm până la marginea dreaptă (apoi sărim cu nota nouă)
+      const startX = meta.x
+      let endX = startX
+      if (meta.nextId) {
+        const next = noteMetaRef.current.get(meta.nextId)
+        if (next) endX = next.systemIndex === meta.systemIndex ? next.x : layout.rightEdge
+      }
+      if (endX <= startX || !durationSeconds || durationSeconds <= 0) return
+
+      const startedAt = performance.now()
+      const slide = (now: number) => {
+        const progress = Math.min((now - startedAt) / (durationSeconds * 1000), 1)
+        const x = startX + (endX - startX) * progress
+        cursor.setAttribute("x", String(x))
+        followCursorH(x)
+        cursorAnimRef.current = progress < 1 ? requestAnimationFrame(slide) : null
+      }
+      cursorAnimRef.current = requestAnimationFrame(slide)
+    })
+
+    return () => {
+      unsubscribe()
+      if (cursorAnimRef.current !== null) cancelAnimationFrame(cursorAnimRef.current)
+    }
+  }, [])
+
+  // audiția la editare (ca în MuseScore): când selecția sau înălțimile notei
+  // selectate se schimbă (selectare, ↑/↓, alterații, acord nou), o auzi scurt.
+  // Cheia de deduplicare evită re-redarea la modificări neauzibile (durată etc.);
+  // în timpul redării selecția e goală, deci audiția tace de la sine.
+  const auditionKeyRef = useRef("")
+  useEffect(() => {
+    const staff = staves.find((s) => s.notes.some((n) => n.id === selectedId))
+    const entry = staff?.notes.find((n) => n.id === selectedId)
+    if (!staff || !entry || entry.type !== "note") {
+      auditionKeyRef.current = selectedId ?? ""
+      return
+    }
+    const pitches =
+      selectedPitchIndex !== null && entry.pitches[selectedPitchIndex]
+        ? [entry.pitches[selectedPitchIndex]]
+        : entry.pitches
+    const key = `${selectedId}|${selectedPitchIndex ?? "all"}|${pitches
+      .map((p) => `${p.step}${p.accidental ?? ""}${p.octave}`)
+      .join(",")}`
+    if (key === auditionKeyRef.current) return
+    auditionKeyRef.current = key
+    void auditionPitches(staff.instrument, staff.keySignature, pitches)
+  }, [selectedId, selectedPitchIndex, staves])
 
   // navigare/editare din tastatură (vezi indicațiile de sub portativ)
   useEffect(() => {
@@ -374,11 +782,74 @@ export function InteractiveStave() {
 
       const hasModifier = event.metaKey || event.ctrlKey || event.altKey
 
-      const hotkeyDuration = DURATION_HOTKEYS[event.key.toLowerCase()]
-      if (hotkeyDuration && !hasModifier) {
+      // Ctrl+Z / Ctrl+Y (sau Ctrl+Shift+Z) — anulează / refă
+      if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+        const key = event.key.toLowerCase()
+        if (key === "z" && !event.shiftKey) {
+          event.preventDefault()
+          dispatch({ type: "undo" })
+          return
+        }
+        if (key === "y" || (key === "z" && event.shiftKey)) {
+          event.preventDefault()
+          dispatch({ type: "redo" })
+          return
+        }
+      }
+
+      // N comută modul de introducere a notelor din tastatură (ca în MuseScore)
+      if (event.key.toLowerCase() === "n" && !hasModifier) {
         event.preventDefault()
-        dispatch({ type: "setDuration", duration: hotkeyDuration })
+        setNoteInputMode((mode) => !mode)
         return
+      }
+
+      // P comută intrarea selectată între notă și pauză (păstrând durata și,
+      // la revenire, înălțimile/acordul) — merge în ambele moduri
+      if (event.key.toLowerCase() === "p" && !hasModifier) {
+        event.preventDefault()
+        dispatch({ type: "toggleRest" })
+        return
+      }
+
+      // în modul de introducere, literele C–B devin note — duratele se aleg cu
+      // cifrele 1–5, pauza cu 0 (literele Q W E R T / A S D F G sunt ocupate)
+      if (noteInputMode && !hasModifier) {
+        if (event.key === "Escape") {
+          event.preventDefault()
+          setNoteInputMode(false)
+          return
+        }
+        const step = NOTE_KEYS[event.key.toLowerCase()]
+        if (step) {
+          event.preventDefault()
+          dispatch({ type: "insertNoteWithStep", step })
+          return
+        }
+        if (event.key === "0") {
+          event.preventDefault()
+          dispatch({ type: "insertRest", duration: selectedDuration })
+          return
+        }
+        const digitDuration = DIGIT_DURATIONS[event.key]
+        if (digitDuration) {
+          event.preventDefault()
+          dispatch({ type: "setDuration", duration: digitDuration })
+          return
+        }
+        // celelalte litere de comenzi din modul normal nu fac nimic aici
+        if (/^[a-z]$/.test(event.key.toLowerCase()) && event.key.toLowerCase() !== "l") {
+          return
+        }
+      }
+
+      if (!noteInputMode) {
+        const hotkeyDuration = DURATION_HOTKEYS[event.key.toLowerCase()]
+        if (hotkeyDuration && !hasModifier) {
+          event.preventDefault()
+          dispatch({ type: "setDuration", duration: hotkeyDuration })
+          return
+        }
       }
 
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
@@ -393,11 +864,13 @@ export function InteractiveStave() {
         return
       }
 
-      const restDuration = REST_HOTKEYS[event.key.toLowerCase()]
-      if (restDuration && !hasModifier) {
-        event.preventDefault()
-        dispatch({ type: "insertRest", duration: restDuration })
-        return
+      if (!noteInputMode) {
+        const restDuration = REST_HOTKEYS[event.key.toLowerCase()]
+        if (restDuration && !hasModifier) {
+          event.preventDefault()
+          dispatch({ type: "insertRest", duration: restDuration })
+          return
+        }
       }
 
       if (!selectedId) return
@@ -416,6 +889,13 @@ export function InteractiveStave() {
         return
       }
 
+      // . -> punct de prelungire pe intrarea selectată (comutator)
+      if (event.key === "." && !hasModifier) {
+        event.preventDefault()
+        dispatch({ type: "toggleDot" })
+        return
+      }
+
       if (event.key === "ArrowUp" || event.key === "ArrowDown") {
         event.preventDefault()
         dispatch({ type: "transposeSelected", direction: event.key === "ArrowUp" ? "up" : "down" })
@@ -427,23 +907,43 @@ export function InteractiveStave() {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [selectedId, dispatch])
+  }, [selectedId, selectedDuration, noteInputMode, dispatch])
 
   return (
     <div className="flex flex-col gap-2">
-      <div ref={containerRef} className="w-full" />
-      <p className="px-1 text-xs text-foreground-muted">
-        Click pe un portativ — adaugă o notă în el (devine activ) · Click pe o notă — o selectează ·{" "}
-        <span className="text-foreground">← / →</span> circulă între note ·{" "}
-        <span className="text-foreground">↑ / ↓</span> schimbă înălțimea ·{" "}
-        <span className="text-foreground">Q W E R T</span> durata ·{" "}
-        <span className="text-foreground">Enter</span> notă nouă ·{" "}
-        <span className="text-foreground">A S D F G</span> pauză ·{" "}
-        <span className="text-foreground">[ ] \</span> alterație ·{" "}
-        <span className="text-foreground">L</span> legato ·{" "}
-        <span className="text-foreground">Delete</span> șterge ·{" "}
-        <span className="text-foreground">Ctrl+click pe portativ</span> îl bifează pentru redare parțială
-      </p>
+      {/* overflow-x: în vizualizarea continuă SVG-ul e mai lat decât containerul */}
+      <div ref={containerRef} className="w-full overflow-x-auto" />
+      {noteInputMode ? (
+        <p className="px-1 text-xs">
+          <span className="rounded-sm bg-primary/20 px-1.5 py-0.5 font-medium text-primary">
+            ● Introducere note
+          </span>{" "}
+          <span className="text-foreground-muted">
+            <span className="text-foreground">C D E F G A B</span> introduc nota (octava cea mai apropiată) ·{" "}
+            <span className="text-foreground">0</span> pauză · <span className="text-foreground">1–5</span> durata
+            (întreagă → șaisprezecime) · <span className="text-foreground">.</span> punct ·{" "}
+            <span className="text-foreground">[ ] \</span> alterație ·{" "}
+            <span className="text-foreground">↑ / ↓</span> ajustează înălțimea ·{" "}
+            <span className="text-foreground">N / Esc</span> ieșire
+          </span>
+        </p>
+      ) : (
+        <p className="px-1 text-xs text-foreground-muted">
+          <span className="text-foreground">N</span> introducere note din tastatură · Click pe un portativ — adaugă o
+          notă (devine activ) · Click pe o notă — o selectează ·{" "}
+          <span className="text-foreground">← / →</span> circulă între note ·{" "}
+          <span className="text-foreground">↑ / ↓</span> schimbă înălțimea ·{" "}
+          <span className="text-foreground">Q W E R T</span> durata ·{" "}
+          <span className="text-foreground">Enter</span> notă nouă ·{" "}
+          <span className="text-foreground">A S D F G</span> pauză ·{" "}
+          <span className="text-foreground">[ ] \</span> alterație ·{" "}
+          <span className="text-foreground">.</span> punct ·{" "}
+          <span className="text-foreground">P</span> notă ↔ pauză ·{" "}
+          <span className="text-foreground">L</span> legato ·{" "}
+          <span className="text-foreground">Delete</span> șterge ·{" "}
+          <span className="text-foreground">Ctrl+click pe portativ</span> îl bifează pentru redare parțială
+        </p>
+      )}
     </div>
   )
 }

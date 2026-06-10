@@ -1,28 +1,32 @@
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
-import { Play, Square, RotateCcw } from "lucide-react"
+import { Play, Square, RotateCcw, Loader2 } from "lucide-react"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { ScorePlayer } from "@/lib/audio/playback"
 import { Metronome } from "@/lib/audio/metronome"
+import { emitPlaybackHighlight } from "@/lib/audio/playbackHighlight"
 
 /**
  * Bară de jos: control playback (play/stop) și tempo (BPM). Redarea folosește
  * motorul audio Tone.js (`ScorePlayer`) și citește notele din starea partajată;
- * pe durata redării, nota curentă e evidențiată pe portativ prin selecție.
- * Metronomul urmează într-un pas viitor.
+ * pe durata redării, nota curentă e evidențiată direct în SVG (fără dispatch,
+ * ca să nu re-randăm partitura la fiecare notă — vezi lib/audio/playbackHighlight).
  */
 export function TransportBar() {
-  const { staves, activeStaffId, selectedStaffIds, timeSignature, dispatch } = useScoreEditor()
+  const { staves, activeStaffId, selectedStaffIds, timeSignature, meta, setMeta, dispatch } = useScoreEditor()
   const [isPlaying, setIsPlaying] = useState(false)
-  const [tempo, setTempo] = useState(120)
+  // adevărat cât timp se descarcă eșantioanele instrumentelor (doar primul Play)
+  const [isPreparing, setIsPreparing] = useState(false)
   const [metronomeOn, setMetronomeOn] = useState(false)
+  // tempo-ul e parte din piesă (indicația ♩=X de pe foaie) — trăiește în meta
+  const tempo = meta.tempo
 
   // un singur player și un singur metronom pe toată durata componentei
   const playerRef = useRef<ScorePlayer | null>(null)
-  if (!playerRef.current) playerRef.current = new ScorePlayer()
+  if (playerRef.current == null) playerRef.current = new ScorePlayer()
   const metronomeRef = useRef<Metronome | null>(null)
-  if (!metronomeRef.current) metronomeRef.current = new Metronome()
+  if (metronomeRef.current == null) metronomeRef.current = new Metronome()
 
   // oprește redarea la demontarea componentei (evită sunet rămas în urmă)
   useEffect(() => {
@@ -31,6 +35,7 @@ export function TransportBar() {
     return () => {
       player?.stop()
       metronome?.stop()
+      emitPlaybackHighlight(null)
     }
   }, [])
 
@@ -54,30 +59,41 @@ export function TransportBar() {
 
     if (isPlaying) {
       player.stop()
+      emitPlaybackHighlight(null)
       setIsPlaying(false)
       return
     }
 
     setIsPlaying(true)
+    // golim selecția de notă, ca singura notă aurie să fie cea redată
+    dispatch({ type: "selectNote", id: null })
     // redă doar portativele bifate (Ctrl+click); fără bifare, redă toate
     const played =
       selectedStaffIds.length > 0 ? staves.filter((s) => selectedStaffIds.includes(s.id)) : staves
-    // fiecare portativ își duce propria armură (poate diferi între instrumente)
-    const parts = played.map((s) => ({ notes: s.notes, keySignature: s.keySignature }))
+    // fiecare portativ își duce propria armură și propriul timbru de instrument
+    const parts = played.map((s) => ({ notes: s.notes, keySignature: s.keySignature, instrument: s.instrument }))
     // evidențiem portativul activ dacă e printre cele redate, altfel primul redat
     const activeAmongPlayed = played.findIndex((s) => s.id === activeStaffId)
     const highlightPartIndex = activeAmongPlayed >= 0 ? activeAmongPlayed : 0
-    void player.play(parts, tempo, {
-      metronome: metronomeOn,
-      timeSignature,
-      highlightPartIndex,
-      onNote: (id) => dispatch({ type: "selectNote", id }),
-      onEnd: () => setIsPlaying(false),
-    })
+    // play() se rezolvă după programarea notelor (include descărcarea eșantioanelor)
+    setIsPreparing(true)
+    void player
+      .play(parts, tempo, {
+        metronome: metronomeOn,
+        timeSignature,
+        highlightPartIndex,
+        onNote: (id, durationSeconds) => emitPlaybackHighlight(id, durationSeconds),
+        onEnd: () => {
+          emitPlaybackHighlight(null)
+          setIsPlaying(false)
+        },
+      })
+      .finally(() => setIsPreparing(false))
   }
 
   function reset() {
     playerRef.current?.stop()
+    emitPlaybackHighlight(null)
     setIsPlaying(false)
     // readucem selecția la prima notă a portativului activ, ca punct de pornire
     const activeNotes = staves.find((s) => s.id === activeStaffId)?.notes ?? []
@@ -93,7 +109,13 @@ export function TransportBar() {
           onClick={togglePlay}
           aria-label={isPlaying ? "Stop" : "Play"}
         >
-          {isPlaying ? <Square className="size-4" /> : <Play className="size-4" />}
+          {isPreparing ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : isPlaying ? (
+            <Square className="size-4" />
+          ) : (
+            <Play className="size-4" />
+          )}
         </Button>
         <Button
           variant="outline"
@@ -114,11 +136,8 @@ export function TransportBar() {
           max={240}
           step={1}
           value={[tempo]}
-          onValueChange={(v) => setTempo(Array.isArray(v) ? v[0] : v)}
+          onValueChange={(v) => setMeta({ tempo: Array.isArray(v) ? v[0] : v })}
         />
-        <span className="w-16 text-right text-sm tabular-nums text-foreground">
-          ♩ = {tempo}
-        </span>
       </div>
 
       <div className="flex items-center gap-2">

@@ -1,0 +1,25 @@
+# Dependențe și build (deja în .gitignore, dar le listăm explicit)
+node_modules/
+dist/
+dist-ssr/
+build/
+
+# Lockfile mare (243KB) — rar necesar de citit
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Fișiere binare / asset-uri
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.woff
+*.woff2
+*.ttf
+
+# Loguri și fișiere locale
+*.log
+*.local
+.DS_Store

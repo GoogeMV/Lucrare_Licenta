@@ -19,10 +19,6 @@ export function SignatureControls() {
 
   return (
     <div className="flex items-center gap-3">
-      <span className="text-xs text-foreground-muted">
-        Portativ activ: <span className="text-primary">{activeStaff.instrument}</span>
-      </span>
-
       <label className="flex items-center gap-1.5 text-xs text-foreground-muted">
         Cheie
         <select

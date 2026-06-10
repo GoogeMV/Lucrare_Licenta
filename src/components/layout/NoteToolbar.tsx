@@ -11,7 +11,6 @@ import {
   DURATION_LABELS,
   DURATION_SYMBOLS,
   DURATIONS,
-  REST_HOTKEY_LABELS,
 } from "@/lib/notation/duration"
 import {
   ACCIDENTAL_HOTKEY_LABELS,
@@ -34,42 +33,6 @@ const DISABLED_BUTTON_CLASS =
   "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:text-foreground"
 
 const ACCIDENTALS: Accidental[] = ["flat", "sharp", "natural"]
-
-/** Pauzele disponibile în toolbar, cu durata și tasta rapidă asociată (A/S/D) */
-const REST_BUTTONS: { duration: Duration; symbol: string; label: string }[] = [
-  { duration: "whole", symbol: "𝄻", label: "Pauză întreagă" },
-  { duration: "half", symbol: "𝄼", label: "Pauză de doime" },
-  { duration: "quarter", symbol: "𝄽", label: "Pauză de pătrime" },
-]
-
-/**
- * Grupul de pauze: fiecare buton inserează o pauză de durata respectivă imediat
- * după elementul selectat (în oglindă cu tastele rapide A/S/D de pe portativ).
- */
-function RestGroup() {
-  const { dispatch } = useScoreEditor()
-
-  return (
-    <div>
-      <h3 className="mb-1.5 text-[11px] font-medium text-foreground-muted">Pauze</h3>
-      <div className="grid grid-cols-3 gap-1.5">
-        {REST_BUTTONS.map(({ duration, symbol, label }) => (
-          <Tooltip key={duration}>
-            <TooltipTrigger
-              onClick={() => dispatch({ type: "insertRest", duration })}
-              className={TOOL_BUTTON_CLASS}
-            >
-              {symbol}
-            </TooltipTrigger>
-            <TooltipContent>
-              {label} <span className="opacity-60">({REST_HOTKEY_LABELS[duration]})</span>
-            </TooltipContent>
-          </Tooltip>
-        ))}
-      </div>
-    </div>
-  )
-}
 
 /**
  * Grupul de alterații: aplică (sau elimină, dacă e deja aplicată) alterația
@@ -155,7 +118,7 @@ function ArticulationGroup() {
  * input și, dacă există o intrare selectată, îi schimbă imediat durata.
  */
 function DurationGroup() {
-  const { selectedDuration, dispatch } = useScoreEditor()
+  const { selectedDuration, selectedId, dispatch } = useScoreEditor()
 
   return (
     <div>
@@ -182,6 +145,19 @@ function DurationGroup() {
             </Tooltip>
           )
         })}
+        <Tooltip>
+          <TooltipTrigger
+            disabled={!selectedId}
+            onClick={() => dispatch({ type: "toggleDot" })}
+            className={cn(TOOL_BUTTON_CLASS, DISABLED_BUTTON_CLASS)}
+          >
+            ♩.
+          </TooltipTrigger>
+          <TooltipContent>
+            Punct de prelungire — lungește nota cu 50%, punctul apare lângă cap{" "}
+            <span className="opacity-60">(.)</span>
+          </TooltipContent>
+        </Tooltip>
       </div>
     </div>
   )
@@ -198,8 +174,6 @@ export function NoteToolbar() {
         Toolbar note
       </h2>
       <DurationGroup />
-      <Separator />
-      <RestGroup />
       <Separator />
       <AccidentalGroup />
       <Separator />

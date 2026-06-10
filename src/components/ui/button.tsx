@@ -55,4 +55,7 @@ function Button({
   )
 }
 
+// fișier shadcn standard: exportă și buttonVariants (nu doar componenta), deci
+// Fast Refresh face reload complet la editare — doar în dev, fără efect la runtime
+// eslint-disable-next-line react-refresh/only-export-components
 export { Button, buttonVariants }

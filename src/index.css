@@ -132,3 +132,12 @@ body {
     @apply font-sans;
   }
 }
+
+/*
+ * Scrollbar-uri native pe tema aplicației (proprietățile standard, suportate
+ * de Chrome/Edge 121+ și Firefox; culoarea thumb-ului = cea din ScrollArea).
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}

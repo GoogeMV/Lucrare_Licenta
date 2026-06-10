@@ -34,6 +34,30 @@ export function pitchToVexflowKey(pitch: Pitch): string {
   return `${pitch.step.toLowerCase()}/${pitch.octave}`
 }
 
+/** Indicele diatonic absolut al unei înălțimi (pentru comparat/sortat) */
+export function pitchIndex(pitch: Pitch): number {
+  return pitch.octave * 7 + STEP_ORDER.indexOf(pitch.step)
+}
+
+/**
+ * Înălțimea cu treapta dată, la octava cea mai apropiată de nota de referință
+ * (ca la introducerea notelor din tastatură în MuseScore: după Sol4, tasta C
+ * dă Do5 — cvartă ascendentă — nu Do4, care ar fi cvintă descendentă).
+ */
+export function nearestPitchWithStep(reference: Pitch, step: Step): Pitch {
+  const referenceIndex = reference.octave * 7 + STEP_ORDER.indexOf(reference.step)
+  let best: Pitch = { step, octave: reference.octave }
+  let bestDistance = Infinity
+  for (const octave of [reference.octave - 1, reference.octave, reference.octave + 1]) {
+    const distance = Math.abs(octave * 7 + STEP_ORDER.indexOf(step) - referenceIndex)
+    if (distance < bestDistance) {
+      bestDistance = distance
+      best = { step, octave }
+    }
+  }
+  return best
+}
+
 /**
  * Înălțimea liniei de sus a portativului, pentru fiecare cheie. Pornind de
  * acolo în jos, fiecare linie/spațiu e cu o treaptă diatonică mai jos —

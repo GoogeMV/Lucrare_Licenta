@@ -32,9 +32,14 @@ export type Articulation = "staccato" | "accent" | "tenuto" | "marcato"
 export interface NoteEntry {
   id: string
   type: EntryType
-  /** Pentru pauze, `pitch` e folosit doar ca poziție de afișare pe portativ (implicit b/4) */
-  pitch: Pitch
+  /**
+   * Înălțimile intrării: una singură pentru o notă obișnuită, mai multe pentru
+   * un acord (sortate ascendent). Pentru pauze, prima e doar poziția de afișare.
+   */
+  pitches: Pitch[]
   duration: Duration
+  /** Punct de prelungire: durata crește cu jumătate (ex. pătrime cu punct = 1.5 timpi) */
+  dotted?: boolean
   /** Semne de expresie aplicate notei (staccato, accent, tenuto…); absent dacă nu există */
   articulations?: Articulation[]
 }

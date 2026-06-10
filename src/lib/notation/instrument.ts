@@ -44,6 +44,18 @@ export function clefsForInstrument(instrument: string): Clef[] {
   return isGrandStaff(instrument) ? GRAND_STAFF_CLEFS : [clefForInstrument(instrument)]
 }
 
+/** Abrevieri pentru numele lungi, ca eticheta să nu intre peste portativ */
+const INSTRUMENT_ABBREVIATIONS: Record<string, string> = {
+  "Pian electric": "Pian el.",
+}
+
+/** Numele scurt afișat ca etichetă în stânga portativului */
+export function instrumentLabel(instrument: string): string {
+  const abbreviation = INSTRUMENT_ABBREVIATIONS[instrument]
+  if (abbreviation) return abbreviation
+  return instrument.length > 9 ? `${instrument.slice(0, 8)}…` : instrument
+}
+
 /** Cheile (clef) oferite în selector, cu eticheta în română */
 export const CLEF_OPTIONS: { clef: Clef; label: string }[] = [
   { clef: "treble", label: "Cheie sol" },

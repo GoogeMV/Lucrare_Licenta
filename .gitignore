@@ -17,8 +17,19 @@ dist-ssr
 !.vscode/extensions.json
 .idea
 .DS_Store
+Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# Environment & secrets
+.env
+.env.*
+
+# Test coverage
+coverage
+
+# Claude Code (setările personale locale; settings.json partajat rămâne în repo)
+.claude/settings.local.json

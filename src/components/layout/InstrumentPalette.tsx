@@ -20,10 +20,12 @@ const INSTRUMENT_GROUPS = [
   },
 ]
 
+/** Tipul MIME folosit la drag & drop-ul instrumentelor din paletă pe partitură */
+export const INSTRUMENT_DRAG_TYPE = "application/x-notationsoft-instrument"
+
 /**
- * Panou din stânga: lista instrumentelor disponibile. Click pe un instrument
- * adaugă un portativ nou în partitură (cu cheia corespunzătoare), care devine
- * portativul activ.
+ * Panou din stânga: lista instrumentelor disponibile. Un instrument se adaugă
+ * în partitură prin drag & drop peste foaie sau prin click (ambele funcționează).
  */
 export function InstrumentPalette() {
   const { dispatch } = useScoreEditor()
@@ -35,7 +37,7 @@ export function InstrumentPalette() {
           Instrumente
         </h2>
         <p className="mt-1 text-[11px] leading-snug text-foreground-muted">
-          Click pe un instrument pentru a adăuga un portativ nou în partitură.
+          Trage un instrument peste partitură (sau dă click) pentru a-l adăuga.
         </p>
       </div>
 
@@ -51,8 +53,13 @@ export function InstrumentPalette() {
                   <li key={instrument}>
                     <button
                       type="button"
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData(INSTRUMENT_DRAG_TYPE, instrument)
+                        e.dataTransfer.effectAllowed = "copy"
+                      }}
                       onClick={() => dispatch({ type: "addStaff", instrument })}
-                      className="w-full rounded-md border border-border bg-surface-hover px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:border-primary/60 hover:text-primary"
+                      className="w-full cursor-grab rounded-md border border-border bg-surface-hover px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:border-primary/60 hover:text-primary active:cursor-grabbing"
                     >
                       {instrument}
                     </button>

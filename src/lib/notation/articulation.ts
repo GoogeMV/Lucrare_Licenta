@@ -17,7 +17,7 @@ export const ARTICULATION_SYMBOLS: Record<Articulation, string> = {
 }
 
 export const ARTICULATION_LABELS: Record<Articulation, string> = {
-  staccato: "Staccato",
+  staccato: "Staccato — scurtează nota (punct deasupra capului)",
   accent: "Accent",
   tenuto: "Tenuto",
   marcato: "Marcato",

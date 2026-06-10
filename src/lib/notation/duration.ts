@@ -84,3 +84,8 @@ export function vexflowDurationCode(duration: Duration, isRest: boolean): string
   const base = DURATION_TO_VEXFLOW[duration]
   return isRest ? `${base}r` : base
 }
+
+/** Durata efectivă a unei intrări, în pătrimi — punctul de prelungire adaugă 50% */
+export function entryBeats(entry: { duration: Duration; dotted?: boolean }): number {
+  return DURATION_BEATS[entry.duration] * (entry.dotted ? 1.5 : 1)
+}

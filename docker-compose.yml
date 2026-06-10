@@ -1,0 +1,8 @@
+# Rulează aplicația containerizată: `docker compose up --build`
+# apoi deschide http://localhost:8080
+services:
+  notationsoft:
+    build: .
+    ports:
+      - "8080:80"
+    restart: unless-stopped

@@ -1,22 +1,25 @@
 import * as Tone from "tone"
 import type { KeySignature, NoteEntry, TimeSignature } from "@/types/score"
-import { DURATION_BEATS } from "@/lib/notation/duration"
+import { entryBeats } from "@/lib/notation/duration"
 import { pitchToToneNote } from "@/lib/notation/pitch"
 import { keyAccidentalMap } from "@/lib/notation/keySignature"
 import { beatSeconds } from "@/lib/notation/timeSignature"
 import { CLICK_BEAT, CLICK_DOWNBEAT, CLICK_DURATION } from "@/lib/audio/metronome"
+import { getInstrumentSound, type InstrumentSound } from "@/lib/audio/instruments"
 
 const DEFAULT_TIME_SIGNATURE: TimeSignature = { numerator: 4, denominator: 4 }
 
-/** Un portativ de redat: notele lui și armura proprie (poate diferi între portative) */
+/** Un portativ de redat: notele, armura proprie și instrumentul (timbrul) lui */
 export interface PlaybackPart {
   notes: NoteEntry[]
   keySignature: KeySignature
+  instrument: string
 }
 
 export interface PlaybackOptions {
-  /** Apelat când redarea ajunge la o intrare — folosit pentru a evidenția nota curentă */
-  onNote?: (id: string) => void
+  /** Apelat când redarea ajunge la o intrare — primește id-ul și durata ei în
+   *  secunde (la tempo-ul curent), folosite de evidențiere și de cursorul animat */
+  onNote?: (id: string, durationSeconds: number) => void
   /** Apelat când redarea s-a terminat (sau a fost oprită prin atingerea finalului) */
   onEnd?: () => void
   /** Dacă e activ, programează și clicuri de metronom pe fiecare timp, aliniate la note */
@@ -40,10 +43,13 @@ const LEAD_SECONDS = 0.1
  * întotdeauna o redare anterioară înainte să pornească una nouă.
  */
 export class ScorePlayer {
-  private synth: Tone.PolySynth | null = null
+  /** sunetele folosite de redarea curentă (din cache-ul de instrumente — nu se distrug) */
+  private activeSounds: InstrumentSound[] = []
   private clickSynth: Tone.MembraneSynth | null = null
   private timers: number[] = []
   private playing = false
+  /** crește la fiecare play/stop — invalidează redările rămase în încărcare */
+  private session = 0
 
   get isPlaying() {
     return this.playing
@@ -51,14 +57,17 @@ export class ScorePlayer {
 
   /**
    * Redă mai multe portative simultan: fiecare element din `parts` e lista de
-   * note a unui portativ, pornind toate de la timpul 0. Evidențierea notei
-   * curente (`onNote`) urmărește doar portativul indicat de `highlightPartIndex`.
+   * note a unui portativ, pornind toate de la timpul 0, fiecare cu timbrul
+   * instrumentului său (eșantioane reale, încărcate leneș la primul Play).
+   * Evidențierea notei curente urmărește portativul `highlightPartIndex`.
    */
   async play(parts: PlaybackPart[], bpm: number, options: PlaybackOptions = {}) {
+    this.stop()
+    const session = ++this.session
+
     // deblochează AudioContext-ul — trebuie apelat dintr-un gest al utilizatorului
     // (apăsarea butonului Play), altfel browserul nu pornește sunetul
     await Tone.start()
-    this.stop()
 
     const totalNotes = parts.reduce((sum, part) => sum + part.notes.length, 0)
     if (totalNotes === 0) {
@@ -66,8 +75,15 @@ export class ScorePlayer {
       return
     }
 
-    this.synth = new Tone.PolySynth(Tone.Synth).toDestination()
-    this.synth.volume.value = -6
+    // sunetele instrumentelor (prima dată descarcă eșantioanele; apoi, din cache)
+    const sounds = await Promise.all(parts.map((part) => getInstrumentSound(part.instrument)))
+    // dacă între timp s-a apăsat Stop sau alt Play, redarea asta nu mai pornește
+    if (session !== this.session) {
+      options.onEnd?.()
+      return
+    }
+
+    this.activeSounds = sounds
     this.playing = true
 
     const timeSignature = options.timeSignature ?? DEFAULT_TIME_SIGNATURE
@@ -78,28 +94,32 @@ export class ScorePlayer {
     let maxOffset = 0 // durata celui mai lung portativ (decide finalul redării)
 
     parts.forEach((part, partIndex) => {
+      const sound = sounds[partIndex]
       // fiecare portativ își aplică propria armură (instrumente transpozitorii)
       const keyMap = keyAccidentalMap(part.keySignature)
       let offset = 0 // în secunde, de la începutul redării, pentru acest portativ
       for (const entry of part.notes) {
-        const durationSeconds = DURATION_BEATS[entry.duration] * secondsPerBeat
+        const durationSeconds = entryBeats(entry) * secondsPerBeat
 
         if (entry.type === "note") {
-          // o notă fără alterație explicită sună conform armurii (ex. Fa → Fa♯ în Sol major)
-          const accidental = entry.pitch.accidental ?? keyMap[entry.pitch.step]
-          const toneNote = pitchToToneNote({ ...entry.pitch, accidental })
+          // toate înălțimile intrării (acord) — fără alterație explicită,
+          // fiecare sună conform armurii (ex. Fa → Fa♯ în Sol major)
+          const toneNotes = entry.pitches.map((pitch) =>
+            pitchToToneNote({ ...pitch, accidental: pitch.accidental ?? keyMap[pitch.step] }),
+          )
           // staccato scurtează nota redată; restul notelor sună ~90% din durată
           const isStaccato = entry.articulations?.includes("staccato")
           const sounded = durationSeconds * (isStaccato ? 0.4 : 0.9)
-          this.synth!.triggerAttackRelease(toneNote, sounded, startTime + offset)
+          sound.triggerAttackRelease(toneNotes, sounded, startTime + offset)
         }
 
         // evidențiem nota curentă doar pentru portativul urmărit
         if (partIndex === highlightIndex) {
           const id = entry.id
+          const noteSeconds = durationSeconds
           const timer = window.setTimeout(
             () => {
-              if (this.playing) options.onNote?.(id)
+              if (this.playing) options.onNote?.(id, noteSeconds)
             },
             (offset + LEAD_SECONDS) * 1000,
           )
@@ -128,14 +148,14 @@ export class ScorePlayer {
       }
     }
 
-    // după ultima notă (cel mai lung portativ): marcăm finalul și eliberăm synth-urile
+    // după ultima notă (cel mai lung portativ): marcăm finalul și curățăm
     const endTimer = window.setTimeout(
       () => {
         if (this.playing) {
           this.playing = false
           options.onEnd?.()
         }
-        this.disposeSynth()
+        this.releaseSounds()
       },
       (maxOffset + LEAD_SECONDS) * 1000 + 150,
     )
@@ -143,18 +163,17 @@ export class ScorePlayer {
   }
 
   stop() {
+    this.session += 1
     this.playing = false
     this.timers.forEach((t) => window.clearTimeout(t))
     this.timers = []
-    this.disposeSynth()
+    this.releaseSounds()
   }
 
-  private disposeSynth() {
-    if (this.synth) {
-      this.synth.releaseAll()
-      this.synth.dispose()
-      this.synth = null
-    }
+  private releaseSounds() {
+    // sunetele instrumentelor sunt în cache pe sesiune — doar le oprim, nu le distrugem
+    this.activeSounds.forEach((sound) => sound.releaseAll())
+    this.activeSounds = []
     if (this.clickSynth) {
       this.clickSynth.dispose()
       this.clickSynth = null

@@ -46,3 +46,10 @@ export function keyAccidentalCount(spec: KeySignature): number {
   if (spec in FLAT_KEYS) return FLAT_KEYS[spec]
   return 0
 }
+
+/** Poziția pe cercul cvintelor (formatul MusicXML): diezi pozitiv, bemoli negativ */
+export function keyFifths(spec: KeySignature): number {
+  if (spec in SHARP_KEYS) return SHARP_KEYS[spec]
+  if (spec in FLAT_KEYS) return -FLAT_KEYS[spec]
+  return 0
+}

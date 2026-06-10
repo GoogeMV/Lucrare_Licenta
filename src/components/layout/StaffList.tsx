@@ -17,6 +17,9 @@ const CLEF_LABELS: Record<string, string> = {
 export function StaffList() {
   const { staves, activeStaffId, selectedStaffIds, dispatch } = useScoreEditor()
   const hasPlaybackSelection = selectedStaffIds.length > 0
+  // numărul de instrumente distincte (un pian = un instrument, două portative);
+  // ștergerea e permisă doar dacă mai rămâne cel puțin un instrument
+  const instrumentCount = new Set(staves.map((s) => s.groupId ?? s.id)).size
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -51,11 +54,11 @@ export function StaffList() {
                 <span className="font-medium">{staff.instrument}</span>
                 <span className="opacity-60">{CLEF_LABELS[staff.clef] ?? staff.clef}</span>
               </button>
-              {staves.length > 1 && (
+              {instrumentCount > 1 && (
                 <button
                   type="button"
                   onClick={() => dispatch({ type: "removeStaff", staffId: staff.id })}
-                  aria-label={`Șterge portativul ${staff.instrument}`}
+                  aria-label={`Șterge instrumentul ${staff.instrument}`}
                   className="rounded-sm p-0.5 text-foreground-muted transition-colors hover:bg-surface hover:text-destructive"
                 >
                   <X className="size-3" />
