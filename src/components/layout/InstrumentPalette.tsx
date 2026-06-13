@@ -18,6 +18,10 @@ const INSTRUMENT_GROUPS = [
     name: "Claviaturi",
     instruments: ["Pian", "Pian electric", "Orgă"],
   },
+  {
+    name: "Coarde ciupite",
+    instruments: ["Chitară", "Chitară electrică", "Chitară clasică", "Chitară bas"],
+  },
 ]
 
 /** Tipul MIME folosit la drag & drop-ul instrumentelor din paletă pe partitură */

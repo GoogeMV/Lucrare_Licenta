@@ -17,6 +17,9 @@ export interface Pitch {
   octave: number
   /** Alterația curentă a notei, dacă există (afișată lângă capul notei) */
   accidental?: Accidental
+  /** Coarda (1 = cea mai înaltă) pe care e fretată nota în TAB; absent = mapare
+   *  automată (fret-ul cel mai mic). Doar pentru chitară; nu schimbă înălțimea. */
+  string?: number
 }
 
 /** Tipul unei intrări pe portativ: notă (cu înălțime) sau pauză */
@@ -66,6 +69,9 @@ export interface Slur {
 /** Cheia portativului — determină poziția înălțimilor pe linii */
 export type Clef = "treble" | "bass" | "alto"
 
+/** Modul de afișare al unui portativ de chitară: notație, tablatură sau ambele */
+export type StaffDisplay = "notation" | "tab" | "both"
+
 /**
  * Un portativ (o linie de instrument) din partitură: are propria cheie și
  * propriile note/legături. Armura și măsura sunt comune întregii partituri
@@ -83,6 +89,8 @@ export interface Staff {
    * legate printr-o acoladă (ex. pian: cheie sol + cheie fa).
    */
   groupId?: string
+  /** Modul de afișare (doar chitare): notație / TAB / ambele. Absent = notație. */
+  display?: StaffDisplay
   notes: NoteEntry[]
   slurs: Slur[]
 }

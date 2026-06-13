@@ -1,8 +1,15 @@
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { KEY_SIGNATURES } from "@/lib/notation/keySignature"
 import { CLEF_OPTIONS } from "@/lib/notation/instrument"
+import { supportsTab } from "@/lib/notation/tab"
 import { TIME_SIGNATURES, timeSignatureLabel } from "@/lib/notation/timeSignature"
-import type { Clef } from "@/types/score"
+import type { Clef, StaffDisplay } from "@/types/score"
+
+const DISPLAY_OPTIONS: { value: StaffDisplay; label: string }[] = [
+  { value: "notation", label: "Notație" },
+  { value: "tab", label: "TAB" },
+  { value: "both", label: "Ambele" },
+]
 
 const SELECT_CLASS =
   "h-8 rounded-md border border-border bg-surface-hover px-2 text-xs text-foreground transition-colors hover:border-primary/60 focus-visible:border-primary focus-visible:outline-none"
@@ -50,6 +57,26 @@ export function SignatureControls() {
           ))}
         </select>
       </label>
+
+      {supportsTab(activeStaff.instrument) && (
+        <label className="flex items-center gap-1.5 text-xs text-foreground-muted">
+          Afișare
+          <select
+            aria-label="Mod de afișare al chitarei (notație / TAB / ambele)"
+            className={SELECT_CLASS}
+            value={activeStaff.display ?? "notation"}
+            onChange={(e) =>
+              dispatch({ type: "setStaffDisplay", staffId: activeStaff.id, display: e.target.value as StaffDisplay })
+            }
+          >
+            {DISPLAY_OPTIONS.map(({ value, label }) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       <label className="flex items-center gap-1.5 text-xs text-foreground-muted">
         Măsură <span className="opacity-60">(toate)</span>

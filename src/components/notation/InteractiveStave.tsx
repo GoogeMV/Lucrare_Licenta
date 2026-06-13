@@ -13,6 +13,9 @@ import {
   Fraction,
   StaveConnector,
   StaveTie,
+  TabStave,
+  TabNote,
+  GhostNote,
 } from "vexflow"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { DEFAULT_PITCH } from "@/state/scoreReducer"
@@ -23,6 +26,7 @@ import { ACCIDENTAL_HOTKEYS, ACCIDENTAL_TO_VEXFLOW } from "@/lib/notation/accide
 import { ARTICULATION_TO_VEXFLOW } from "@/lib/notation/articulation"
 import { keyAccidentalCount } from "@/lib/notation/keySignature"
 import { instrumentLabel } from "@/lib/notation/instrument"
+import { openStringPitch, stringCountForInstrument, supportsTab, tabPosition } from "@/lib/notation/tab"
 import { onPlaybackHighlight } from "@/lib/audio/playbackHighlight"
 import { auditionPitches } from "@/lib/audio/audition"
 import { measureQuarters, timeSignatureLabel } from "@/lib/notation/timeSignature"
@@ -164,6 +168,8 @@ export function InteractiveStave() {
   // clipboard pentru copy/paste — date efemere (nu intră în partitură, nici în
   // istoricul undo), deci trăiesc într-un ref, nu în reducer
   const clipboardRef = useRef<NoteEntry[]>([])
+  // buffer pentru tastarea fret-urilor în TAB (două cifre tastate rapid → ex. 12)
+  const fretBufferRef = useRef<{ ts: number; digits: string }>({ ts: 0, digits: "" })
   // oglindă a selecției curente pentru handler-ul de tastatură (Ctrl+C citește
   // selecția fără să re-abonăm listener-ul la fiecare schimbare de selecție)
   const selectionRef = useRef<{ staves: typeof staves; selectedIds: string[]; selectedId: string | null }>({
@@ -250,11 +256,17 @@ export function InteractiveStave() {
     const groupMembers: number[][] = staves.map((staff, i) =>
       staff.groupId ? staves.flatMap((s, j) => (s.groupId === staff.groupId ? [j] : [])) : [i],
     )
-    // înălțimea pe care o ocupă fiecare portativ (mai mică în interiorul unui grup)
+    // modul de afișare al fiecărui portativ (doar chitarele suportă TAB)
+    const staffDisplays = staves.map((s) =>
+      supportsTab(s.instrument) ? (s.display ?? "notation") : "notation",
+    )
+    // înălțimea pe care o ocupă fiecare portativ (mai mică în interiorul unui grup;
+    // un rând în plus pentru chitara în modul „ambele" = notație + TAB)
     const staffSpan: number[] = staves.map((staff, i) => {
       const next = staves[i + 1]
       const tight = !!next && !!staff.groupId && next.groupId === staff.groupId
-      return tight ? GRAND_STAFF_GAP : STAFF_ROW_HEIGHT
+      const base = tight ? GRAND_STAFF_GAP : STAFF_ROW_HEIGHT
+      return staffDisplays[i] === "both" ? base + STAFF_ROW_HEIGHT : base
     })
     // offset-ul vertical al fiecărui portativ în cadrul unui sistem
     const staffOffsets: number[] = []
@@ -298,6 +310,18 @@ export function InteractiveStave() {
     const pendingTie = new Map<string, { sn: StaveNote; systemIndex: number }>()
     const ties: { first: StaveNote; last: StaveNote; count: number }[] = []
     const rows: StaffRow[] = []
+    // rândurile de TAB: ținta click-ului pe tablatură (liniile = corzi). `stringYs`
+    // = Y-ul fiecărei corzi, ca să alegem coarda apăsată; `noteX` = pozițiile
+    // notelor TAB pe orizontală, pentru selecție pe coloană.
+    const tabRows: {
+      staffId: string
+      instrument: string
+      systemIndex: number
+      topY: number
+      bottomY: number
+      stringYs: number[]
+    }[] = []
+    const tabRendered: { id: string; staffId: string; systemIndex: number; x: number }[] = []
     // limitele orizontale ale fiecărei măsuri (aceleași pe toate portativele,
     // barele fiind aliniate) — pentru a ști în ce măsură s-a dat click
     const measureSpans: { systemIndex: number; measureIndex: number; xStart: number; xEnd: number }[] = []
@@ -321,6 +345,14 @@ export function InteractiveStave() {
         const inPlayback = selectedStaffIds.includes(staff.id)
         let x = contentLeft
         let firstStaveOfRow: Stave | null = null
+        let firstTabStaveOfRow: TabStave | null = null
+        // modul de afișare al acestui portativ (notație / TAB / ambele)
+        const display = staffDisplays[staffIndex]
+        const showNotation = display !== "tab"
+        const showTab = display === "tab" || display === "both"
+        // în „ambele", TAB-ul stă sub notație; altfel ocupă rândul portativului
+        const tabYOffset = showNotation ? STAFF_ROW_HEIGHT : 0
+        const stringCount = stringCountForInstrument(staff.instrument)
 
         for (let col = 0; col < measuresInRow; col++) {
           const measureIndex = measureStart + col
@@ -333,6 +365,8 @@ export function InteractiveStave() {
             measureSpans.push({ systemIndex, measureIndex, xStart: x, xEnd: x + measureWidth })
           }
 
+          // --- sub-portativ de NOTAȚIE ---
+          if (showNotation) {
           const stave = new Stave(x, staffY, measureWidth)
           if (isFirstOfSystem) {
             stave.addClef(staff.clef)
@@ -461,13 +495,57 @@ export function InteractiveStave() {
             voice.draw(context, stave)
             beams.forEach((beam) => beam.setContext(context).draw())
           }
+          } // showNotation
+
+          // --- sub-portativ de TAB (tablatură) ---
+          if (showTab) {
+            const tabStave = new TabStave(x, staffY + tabYOffset, measureWidth, { numLines: stringCount })
+            if (isFirstOfSystem) {
+              tabStave.addClef("tab")
+              firstTabStaveOfRow = tabStave
+            }
+            context.setStrokeStyle(staveGradient)
+            context.setFillStyle(staveGradient)
+            tabStave.setContext(context).draw()
+            context.setStrokeStyle(INK_COLOR)
+            context.setFillStyle(INK_COLOR)
+            if (isFirstOfSystem) tabStave.setNoteStartX(tabStave.getNoteStartX() + 16)
+
+            const tabFrags = measures[measureIndex]
+            if (tabFrags && tabFrags.length > 0) {
+              const built: { entry: NoteEntry; tabNote: TabNote | GhostNote }[] = tabFrags.map((frag) => {
+                const entry = staff.notes[frag.noteIndex]
+                if (entry.type === "rest") {
+                  // pauzele în TAB: spațiu invizibil (păstrează alinierea pe timpi)
+                  return { entry, tabNote: new GhostNote({ duration: vexflowDurationCode(frag.duration, false) }) }
+                }
+                const positions = entry.pitches.map((p) => tabPosition(p, staff.instrument))
+                const tabNote = new TabNote({ positions, duration: vexflowDurationCode(frag.duration, false) })
+                if (frag.dotted) Dot.buildAndAttach([tabNote], { all: true })
+                const color = selectedIdSet.has(entry.id) ? ACCENT_COLOR : INK_COLOR
+                tabNote.setStyle({ fillStyle: color, strokeStyle: color })
+                return { entry, tabNote }
+              })
+              const voice = new Voice({ numBeats: timeSignature.numerator, beatValue: timeSignature.denominator })
+              voice.setStrict(false)
+              voice.addTickables(built.map((b) => b.tabNote))
+              const formatWidth = measureWidth - (isFirstOfSystem ? headerWidth + 30 : 30)
+              new Formatter().joinVoices([voice]).format([voice], Math.max(formatWidth, 40))
+              voice.draw(context, tabStave)
+              built.forEach((b) => {
+                // includem și pauzele (pentru inserare corectă pe poziție)
+                tabRendered.push({ id: b.entry.id, staffId: staff.id, systemIndex, x: b.tabNote.getAbsoluteX() })
+              })
+            }
+          }
 
           x += measureWidth
         }
 
-        const labelStave = firstStaveOfRow
+        const labelStave = firstStaveOfRow ?? firstTabStaveOfRow
         if (labelStave) {
-          systemFirstStaves[staffIndex] = labelStave
+          // acoladele de grup (pian) se leagă de portativul de notație
+          if (firstStaveOfRow) systemFirstStaves[staffIndex] = firstStaveOfRow
 
           // numele instrumentului se scrie o singură dată pe grup, centrat
           // vertical între portativele lui (pentru pian — între cheie sol și fa)
@@ -482,17 +560,30 @@ export function InteractiveStave() {
             context.setFillStyle(INK_COLOR)
           }
 
-          // zona de click = strict liniile portativului (cu o mică margine) —
-          // între portative (mai ales la pian) click-ul nu face nimic, iar
-          // notele de deasupra/dedesubt se obțin cu ↑/↓ după adăugare
-          rows.push({
-            staffId: staff.id,
-            clef: staff.clef,
-            stave: labelStave,
-            topY: labelStave.getYForLine(0),
-            bottomY: labelStave.getYForLine(4),
-            systemIndex,
-          })
+          // zona de click pe NOTAȚIE = strict liniile portativului (±8px la handler)
+          if (showNotation && firstStaveOfRow) {
+            rows.push({
+              staffId: staff.id,
+              clef: staff.clef,
+              stave: firstStaveOfRow,
+              topY: firstStaveOfRow.getYForLine(0),
+              bottomY: firstStaveOfRow.getYForLine(4),
+              systemIndex,
+            })
+          }
+          // zona de click pe TAB = liniile corzilor (alegi coarda apăsată)
+          if (showTab && firstTabStaveOfRow) {
+            const ts = firstTabStaveOfRow
+            const stringYs = Array.from({ length: stringCount }, (_, i) => ts.getYForLine(i))
+            tabRows.push({
+              staffId: staff.id,
+              instrument: staff.instrument,
+              systemIndex,
+              topY: stringYs[0],
+              bottomY: stringYs[stringYs.length - 1],
+              stringYs,
+            })
+          }
         }
       })
 
@@ -743,6 +834,60 @@ export function InteractiveStave() {
           return
         }
         const { x: clickX, y: clickY } = clientToSvg(event.clientX, event.clientY)
+
+        // --- click pe TABLATURĂ: alegi coarda (linia) și adaugi/selectezi ---
+        const tabRow = tabRows.find((r) => clickY >= r.topY - 10 && clickY <= r.bottomY + 10)
+        if (tabRow) {
+          if (event.ctrlKey || event.metaKey) {
+            dispatch({ type: "toggleStaffSelection", staffId: tabRow.staffId })
+            return
+          }
+          // coarda cea mai apropiată de click
+          let str = 1
+          let bestD = Infinity
+          tabRow.stringYs.forEach((sy, i) => {
+            const d = Math.abs(sy - clickY)
+            if (d < bestD) {
+              bestD = d
+              str = i + 1
+            }
+          })
+          // notă existentă pe această coloană (TAB)? -> o selectăm
+          const colHit = tabRendered
+            .filter((r) => r.staffId === tabRow.staffId && r.systemIndex === tabRow.systemIndex)
+            .map((r) => ({ r, d: Math.abs(r.x - clickX) }))
+            .filter((c) => c.d < 14)
+            .sort((a, b) => a.d - b.d)[0]?.r
+          if (colHit) {
+            if (event.altKey) dispatch({ type: "toggleNoteInSelection", id: colHit.id })
+            else if (event.shiftKey) dispatch({ type: "extendSelectionTo", id: colHit.id })
+            else dispatch({ type: "selectNote", id: colHit.id })
+            return
+          }
+          if (event.shiftKey || event.altKey) return
+          if (clickX < contentLeft + headerWidth) return
+          // gol pe această coloană -> adăugăm coarda liberă (fret 0) pe coarda apăsată
+          const pitch: Pitch = { ...openStringPitch(tabRow.instrument, str), string: str }
+          const span = measureSpans.find(
+            (m) => m.systemIndex === tabRow.systemIndex && clickX >= m.xStart && clickX < m.xEnd,
+          )
+          const contentMeasures = staffMeasures.get(tabRow.staffId)?.length ?? 0
+          if (span && span.measureIndex >= contentMeasures) {
+            const staffObj = staves.find((s) => s.id === tabRow.staffId)
+            const contentBeats = staffObj ? staffObj.notes.reduce((sum, n) => sum + entryBeats(n), 0) : 0
+            const gapBeats = span.measureIndex * beatsPerMeasure - contentBeats
+            dispatch({ type: "addNoteAfterGap", staffId: tabRow.staffId, pitch, gapBeats: Math.max(0, gapBeats) })
+            return
+          }
+          const insertBefore = tabRendered.find(
+            (r) =>
+              r.staffId === tabRow.staffId &&
+              (r.systemIndex > tabRow.systemIndex ||
+                (r.systemIndex === tabRow.systemIndex && r.x > clickX + 12)),
+          )
+          dispatch({ type: "addNoteAtPitch", staffId: tabRow.staffId, pitch, beforeId: insertBefore?.id })
+          return
+        }
 
         // ±8px ≈ o treaptă și jumătate în jurul liniilor. Dacă mai multe
         // portative se potrivesc (rar, la suprapunere), îl alegem pe cel mai
@@ -1114,6 +1259,26 @@ export function InteractiveStave() {
         event.preventDefault()
         setNoteInputMode((mode) => !mode)
         return
+      }
+
+      // în TAB: tastele 0–9 setează fret-ul notei selectate (pe coarda ei),
+      // cu două cifre tastate rapid pentru fret-uri 10–24 (ca în MuseScore)
+      if (!noteInputMode && !hasModifier && /^[0-9]$/.test(event.key)) {
+        const sel = selectionRef.current
+        const staff = sel.staves.find((s) => s.notes.some((n) => n.id === sel.selectedId))
+        const display = staff && supportsTab(staff.instrument) ? staff.display ?? "notation" : "notation"
+        if (sel.selectedId && (display === "tab" || display === "both")) {
+          event.preventDefault()
+          const now = performance.now()
+          const buf = fretBufferRef.current
+          let digits = event.key
+          if (now - buf.ts < 900 && buf.digits.length > 0 && Number(buf.digits + event.key) <= 24) {
+            digits = buf.digits + event.key
+          }
+          fretBufferRef.current = { ts: now, digits }
+          dispatch({ type: "setFret", fret: Number(digits) })
+          return
+        }
       }
 
       // P comută intrarea selectată între notă și pauză (păstrând durata și,

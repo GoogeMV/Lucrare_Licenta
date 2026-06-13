@@ -8,12 +8,14 @@ import type {
   NoteEntry,
   Pitch,
   Staff,
+  StaffDisplay,
   Step,
   TimeSignature,
 } from "@/types/score"
-import { nearestPitchWithStep, pitchIndex, stepDown, stepUp } from "@/lib/notation/pitch"
+import { nearestPitchWithStep, pitchIndex, pitchSemitone, semitoneToPitch, stepDown, stepUp } from "@/lib/notation/pitch"
 import { clefsForInstrument } from "@/lib/notation/instrument"
 import { decompose } from "@/lib/notation/measure"
+import { tabPosition, tuningForInstrument } from "@/lib/notation/tab"
 
 /**
  * Generatoare de id-uri (efecte secundare, nu funcții pure) — centralizate aici
@@ -140,6 +142,8 @@ export type ScoreAction =
   | { type: "toggleSlur" }
   | { type: "setKeySignature"; keySignature: KeySignature }
   | { type: "setClef"; clef: Clef }
+  | { type: "setStaffDisplay"; staffId: string; display: StaffDisplay }
+  | { type: "setFret"; fret: number }
   | { type: "setTimeSignature"; timeSignature: TimeSignature }
   | { type: "addStaff"; instrument: string }
   | { type: "removeStaff"; staffId: string }
@@ -656,6 +660,29 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
     case "setClef":
       // cheia (clef) e per portativ — schimbă doar portativul activ
       return updateStaff(state, state.activeStaffId, (s) => ({ ...s, clef: action.clef }))
+
+    case "setStaffDisplay":
+      // modul de afișare (notație / TAB / ambele) — doar pentru chitare
+      return updateStaff(state, action.staffId, (s) => ({ ...s, display: action.display }))
+
+    case "setFret": {
+      // setează fret-ul notei selectate pe coarda ei (sau cea auto), schimbând
+      // înălțimea; coarda aleasă se reține ca TAB-ul să rămână pe ea
+      if (!state.selectedId) return state
+      const staff = staffOfNote(state, state.selectedId)
+      if (!staff) return state
+      const pIdx = state.selectedPitchIndex ?? 0
+      const fret = Math.max(0, Math.min(24, action.fret))
+      const tuning = tuningForInstrument(staff.instrument).map(pitchSemitone)
+      return updateNote(state, state.selectedId, (n) => {
+        if (n.type !== "note" || !n.pitches[pIdx]) return n
+        const cur = n.pitches[pIdx]
+        const str = cur.string ?? tabPosition(cur, staff.instrument).str
+        const semitone = tuning[str - 1] + fret
+        const next: Pitch = { ...semitoneToPitch(semitone), string: str }
+        return { ...n, pitches: n.pitches.map((p, i) => (i === pIdx ? next : p)) }
+      })
+    }
 
     case "setTimeSignature":
       return { ...state, timeSignature: action.timeSignature }

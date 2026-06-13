@@ -29,6 +29,10 @@ const SAMPLE_SETS: Record<string, Record<string, string>> = {
   tuba: { F1: "F1.mp3", "A#1": "As1.mp3", F2: "F2.mp3", "A#2": "As2.mp3", D3: "D3.mp3" },
   piano: { C2: "C2.mp3", C3: "C3.mp3", G3: "G3.mp3", A3: "A3.mp3", C4: "C4.mp3", E4: "E4.mp3", G4: "G4.mp3", C5: "C5.mp3", G5: "G5.mp3", C6: "C6.mp3" },
   organ: { A1: "A1.mp3", C2: "C2.mp3", A2: "A2.mp3", C3: "C3.mp3", A3: "A3.mp3", C4: "C4.mp3", A4: "A4.mp3", C5: "C5.mp3", C6: "C6.mp3" },
+  "guitar-acoustic": { A2: "A2.mp3", C3: "C3.mp3", E3: "E3.mp3", G3: "G3.mp3", C4: "C4.mp3", E4: "E4.mp3", G4: "G4.mp3", C5: "C5.mp3" },
+  "guitar-electric": { A2: "A2.mp3", C3: "C3.mp3", "F#3": "Fs3.mp3", A3: "A3.mp3", C4: "C4.mp3", "F#4": "Fs4.mp3", A4: "A4.mp3", C5: "C5.mp3" },
+  "guitar-nylon": { A2: "A2.mp3", "C#3": "Cs3.mp3", E3: "E3.mp3", A3: "A3.mp3", "C#4": "Cs4.mp3", E4: "E4.mp3", A4: "A4.mp3" },
+  "bass-electric": { E1: "E1.mp3", G1: "G1.mp3", "A#1": "As1.mp3", "C#2": "Cs2.mp3", E2: "E2.mp3", G2: "G2.mp3", "A#2": "As2.mp3", E3: "E3.mp3", G3: "G3.mp3" },
 }
 
 /**
@@ -52,6 +56,10 @@ const INSTRUMENT_SAMPLE_FAMILY: Record<string, string> = {
   Pian: "piano",
   "Pian electric": "piano",
   Orgă: "organ",
+  Chitară: "guitar-acoustic",
+  "Chitară electrică": "guitar-electric",
+  "Chitară clasică": "guitar-nylon",
+  "Chitară bas": "bass-electric",
 }
 
 /** Interfața comună folosită de player (Sampler și PolySynth o au amândouă) */
