@@ -1,5 +1,7 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { InteractiveStave } from "@/components/notation/InteractiveStave"
+import { NoteValueIcon } from "@/components/notation/NoteValueIcon"
+import { DURATION_LABELS, TEMPO_BEAT_CHOICES } from "@/lib/notation/duration"
 import { SignatureControls } from "@/components/layout/SignatureControls"
 import { StaffList } from "@/components/layout/StaffList"
 import { INSTRUMENT_DRAG_TYPE } from "@/components/layout/InstrumentPalette"
@@ -11,6 +13,64 @@ import { useScoreEditor } from "@/state/scoreEditorContext"
  * — input-uri transparente care arată ca text tipărit, ca în MuseScore.
  * (Scurtăturile de tastatură ale portativului ignoră tastele din input-uri.)
  */
+/**
+ * Selector pentru unitatea de bătaie a tempo-ului (♩, ♪, 𝅗𝅥, variante cu punct).
+ * Dropdown propriu pe `<details>` — `<select>`-ul nativ acceptă doar text, dar
+ * noi vrem iconițe SVG (vezi NoteValueIcon — simbolurile muzicale Unicode au
+ * coada detașată). Se închide la alegere și la click în afară.
+ */
+function TempoBeatPicker() {
+  const { meta, setMeta } = useScoreEditor()
+  const ref = useRef<HTMLDetailsElement>(null)
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      const el = ref.current
+      if (el?.open && !el.contains(e.target as Node)) el.open = false
+    }
+    document.addEventListener("mousedown", onDocClick)
+    return () => document.removeEventListener("mousedown", onDocClick)
+  }, [])
+
+  return (
+    <details ref={ref} className="relative">
+      <summary
+        title="Unitatea de bătaie a tempo-ului"
+        aria-label="Unitatea de bătaie a tempo-ului"
+        className="flex cursor-pointer list-none items-center rounded px-1 py-0.5 hover:bg-surface-hover [&::-webkit-details-marker]:hidden"
+      >
+        <NoteValueIcon duration={meta.tempoBeat} dotted={meta.tempoBeatDotted} className="text-lg" />
+      </summary>
+      {/* coloane cu lățime FIXĂ (nu 1fr): popoverul se strânge la conținut, iar
+          1fr ar colapsa coloanele la 0 și ar suprapune iconițele */}
+      <div className="absolute left-0 top-full z-20 mt-1 grid grid-cols-[repeat(4,2.25rem)] gap-1 rounded-md border border-border bg-surface p-1.5 shadow-xl">
+        {TEMPO_BEAT_CHOICES.map(({ duration, dotted }) => {
+          const active = duration === meta.tempoBeat && dotted === meta.tempoBeatDotted
+          return (
+            <button
+              key={`${duration}-${dotted}`}
+              type="button"
+              title={`${DURATION_LABELS[duration]}${dotted ? " cu punct" : ""}`}
+              onClick={() => {
+                setMeta({ tempoBeat: duration, tempoBeatDotted: dotted })
+                if (ref.current) ref.current.open = false
+              }}
+              className={cn(
+                "flex h-9 w-9 items-center justify-center rounded border text-base transition-colors",
+                active
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-surface-hover text-foreground hover:border-primary/60 hover:text-primary",
+              )}
+            >
+              <NoteValueIcon duration={duration} dotted={dotted} />
+            </button>
+          )
+        })}
+      </div>
+    </details>
+  )
+}
+
 function SheetHeading() {
   const { meta, setMeta } = useScoreEditor()
 
@@ -33,21 +93,36 @@ function SheetHeading() {
         className="w-full bg-transparent text-right text-sm italic text-foreground-muted outline-none placeholder:text-foreground-muted/40 focus:placeholder:text-foreground-muted/20"
       />
       {/* indicația de tempo — pe foaie, în stânga, deasupra primei măsuri
-          (ca în partiturile tipărite); legată de slider-ul din bara de jos */}
-      <div className="flex items-center gap-1 text-sm text-foreground">
-        <span>♩ =</span>
+          (ca în partiturile tipărite); legată de slider-ul din bara de jos.
+          În stânga, o indicație liberă de tempo/expresie editabilă
+          (ex. „Adagietto", „Pianissimo"), ca în MuseScore. */}
+      <div className="flex items-center gap-3 text-sm text-foreground">
         <input
-          type="number"
-          min={40}
-          max={240}
-          value={meta.tempo}
-          onChange={(e) => {
-            const value = Number(e.target.value)
-            if (Number.isFinite(value)) setMeta({ tempo: Math.max(40, Math.min(240, value)) })
-          }}
-          aria-label="Tempo (pătrimi pe minut)"
-          className="w-14 bg-transparent tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          type="text"
+          value={meta.tempoText}
+          onChange={(e) => setMeta({ tempoText: e.target.value })}
+          placeholder="Indicație (ex. Adagietto, Pianissimo)"
+          aria-label="Indicație de tempo / expresie"
+          className="w-64 bg-transparent font-medium italic outline-none placeholder:not-italic placeholder:text-foreground-muted/40 focus:placeholder:text-foreground-muted/20"
         />
+        <span className="flex items-center gap-1">
+          {/* unitatea de bătaie a indicației de tempo (♩, ♪, 𝅗𝅥…) — alegerea
+              compozitorului; nu afectează viteza de redare */}
+          <TempoBeatPicker />
+          <span>=</span>
+          <input
+            type="number"
+            min={40}
+            max={240}
+            value={meta.tempo}
+            onChange={(e) => {
+              const value = Number(e.target.value)
+              if (Number.isFinite(value)) setMeta({ tempo: Math.max(40, Math.min(240, value)) })
+            }}
+            aria-label="Numărul indicației de tempo"
+            className="w-14 bg-transparent tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          />
+        </span>
       </div>
     </div>
   )

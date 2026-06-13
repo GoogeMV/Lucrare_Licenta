@@ -12,12 +12,13 @@ import {
   Dot,
   Fraction,
   StaveConnector,
+  StaveTie,
 } from "vexflow"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { DEFAULT_PITCH } from "@/state/scoreReducer"
 import { buildStaffPositions, pitchToVexflowKey, TOP_LINE_PITCH } from "@/lib/notation/pitch"
-import { DURATION_HOTKEYS, REST_HOTKEYS, vexflowDurationCode } from "@/lib/notation/duration"
-import { splitIntoMeasures } from "@/lib/notation/measure"
+import { DURATION_HOTKEYS, REST_HOTKEYS, entryBeats, vexflowDurationCode } from "@/lib/notation/duration"
+import { splitIntoMeasures, type MeasureFragment } from "@/lib/notation/measure"
 import { ACCIDENTAL_HOTKEYS, ACCIDENTAL_TO_VEXFLOW } from "@/lib/notation/accidental"
 import { ARTICULATION_TO_VEXFLOW } from "@/lib/notation/articulation"
 import { keyAccidentalCount } from "@/lib/notation/keySignature"
@@ -216,7 +217,7 @@ export function InteractiveStave() {
 
     // împărțim fiecare portativ în măsuri; numărul total de coloane de măsuri
     // e maximul dintre portative (cele mai scurte au măsuri goale la final)
-    const staffMeasures = new Map<string, number[][]>()
+    const staffMeasures = new Map<string, MeasureFragment[][]>()
     let measureCount = 1
     for (const staff of staves) {
       const measures = splitIntoMeasures(staff.notes, beatsPerMeasure)
@@ -288,8 +289,18 @@ export function InteractiveStave() {
       staveNote: StaveNote
       systemIndex: number
       isRest: boolean
+      /** false pentru fragmentele de continuare ale unei note legate peste bară */
+      firstOfNote: boolean
     }[] = []
+    // ligaturile generate de spargerea notelor peste bară: perechi de fragmente
+    // consecutive ale aceleiași note (pe același sistem). `pendingTie` ține
+    // fragmentul de start până vine cel de stop.
+    const pendingTie = new Map<string, { sn: StaveNote; systemIndex: number }>()
+    const ties: { first: StaveNote; last: StaveNote; count: number }[] = []
     const rows: StaffRow[] = []
+    // limitele orizontale ale fiecărei măsuri (aceleași pe toate portativele,
+    // barele fiind aliniate) — pentru a ști în ce măsură s-a dat click
+    const measureSpans: { systemIndex: number; measureIndex: number; xStart: number; xEnd: number }[] = []
     // geometria rândurilor, pentru cursorul de redare (înălțimea lui pe fiecare rând)
     const systemBounds: { top: number; bottom: number }[] = []
 
@@ -316,6 +327,11 @@ export function InteractiveStave() {
           const isFirstOfSystem = col === 0
           const isVeryFirst = systemIndex === 0 && col === 0
           const measureWidth = isFirstOfSystem ? stretchedMeasureWidth + headerWidth : stretchedMeasureWidth
+
+          // limitele măsurii (o singură dată — sunt aceleași pe toate portativele)
+          if (staffIndex === 0) {
+            measureSpans.push({ systemIndex, measureIndex, xStart: x, xEnd: x + measureWidth })
+          }
 
           const stave = new Stave(x, staffY, measureWidth)
           if (isFirstOfSystem) {
@@ -346,35 +362,50 @@ export function InteractiveStave() {
             stave.setNoteStartX(stave.getNoteStartX() + 16)
           }
 
-          const measureNoteIndices = measures[measureIndex]
-          if (measureNoteIndices && measureNoteIndices.length > 0) {
-            const staveNotes = measureNoteIndices.map((noteIndex) => {
-              const entry = staff.notes[noteIndex]
+          const measureFragments = measures[measureIndex]
+          if (measureFragments && measureFragments.length > 0) {
+            const staveNotes = measureFragments.map((frag) => {
+              const entry = staff.notes[frag.noteIndex]
               const isRest = entry.type === "rest"
+              // primul fragment al notei poartă alterațiile/articulațiile/nuanța;
+              // fragmentele de continuare (legate peste bară) nu le repetă
+              const isContinuation = !!frag.tieStop
               // o intrare poate avea mai multe înălțimi (acord) — toate pe același StaveNote
               const pitches = isRest ? [DEFAULT_PITCH] : entry.pitches
               const staveNote = new StaveNote({
                 clef: staff.clef,
                 keys: pitches.map(pitchToVexflowKey),
-                duration: vexflowDurationCode(entry.duration, isRest),
+                duration: vexflowDurationCode(frag.duration, isRest),
               })
-              if (!isRest) {
+              if (!isRest && !isContinuation) {
                 entry.pitches.forEach((pitch, pitchIdx) => {
                   if (pitch.accidental) {
                     staveNote.addModifier(new Accidental(ACCIDENTAL_TO_VEXFLOW[pitch.accidental]), pitchIdx)
                   }
                 })
               }
-              if (!isRest && entry.articulations) {
+              if (!isRest && !isContinuation && entry.articulations) {
                 entry.articulations.forEach((articulation) => {
                   staveNote.addModifier(new Articulation(ARTICULATION_TO_VEXFLOW[articulation]), 0)
                 })
               }
-              // punctul de prelungire — desenat lângă capul notei (nu deasupra,
-              // ca staccato, care e articulație)
-              if (entry.dotted) {
+              // punctul de prelungire — pe fragmentul curent (poate diferi de
+              // nota originală după spargerea peste bară)
+              if (frag.dotted) {
                 Dot.buildAndAttach([staveNote], { all: true })
               }
+
+              // colectăm ligaturile între fragmentele aceleiași note (pe același sistem)
+              const tieKey = `${staff.id}:${frag.noteIndex}`
+              if (frag.tieStop) {
+                const prev = pendingTie.get(tieKey)
+                if (prev && prev.systemIndex === systemIndex) {
+                  ties.push({ first: prev.sn, last: staveNote, count: pitches.length })
+                }
+              }
+              if (frag.tieStart) pendingTie.set(tieKey, { sn: staveNote, systemIndex })
+              else pendingTie.delete(tieKey)
+
               const isSelected = selectedIdSet.has(entry.id)
               // cu o înălțime selectată dintr-un ACORD, doar capul ei e auriu
               // (nota simplă rămâne aurie integral, cu tot cu codiță); valabil
@@ -402,8 +433,16 @@ export function InteractiveStave() {
                   })
                 }
               }
-              noteIdToStaveNote.set(entry.id, staveNote)
-              renderedNotes.push({ id: entry.id, staffId: staff.id, staveNote, systemIndex, isRest })
+              // slururile (legato) se leagă de începutul notei — folosim primul fragment
+              if (!noteIdToStaveNote.has(entry.id)) noteIdToStaveNote.set(entry.id, staveNote)
+              renderedNotes.push({
+                id: entry.id,
+                staffId: staff.id,
+                staveNote,
+                systemIndex,
+                isRest,
+                firstOfNote: !isContinuation,
+              })
               return staveNote
             })
 
@@ -472,9 +511,17 @@ export function InteractiveStave() {
       })
     }
 
-    // legăturile de expresie (legato), pe fiecare portativ, după ce notele au poziții
+    // ligaturile (tie) dintre fragmentele notelor sparte peste bară
     context.setStrokeStyle(INK_COLOR)
     context.setFillStyle(INK_COLOR)
+    ties.forEach(({ first, last, count }) => {
+      const indices = Array.from({ length: count }, (_, i) => i)
+      new StaveTie({ firstNote: first, lastNote: last, firstIndexes: indices, lastIndexes: indices })
+        .setContext(context)
+        .draw()
+    })
+
+    // legăturile de expresie (legato), pe fiecare portativ, după ce notele au poziții
     staves.forEach((staff) => {
       staff.slurs.forEach((slur) => {
         const from = noteIdToStaveNote.get(slur.fromId)
@@ -489,7 +536,8 @@ export function InteractiveStave() {
     if (svgEl) {
       const rowBottom = new Map<string, number>()
       rows.forEach((r) => rowBottom.set(`${r.staffId}:${r.systemIndex}`, r.bottomY))
-      renderedNotes.forEach(({ id, staffId, staveNote, systemIndex }) => {
+      renderedNotes.forEach(({ id, staffId, staveNote, systemIndex, firstOfNote }) => {
+        if (!firstOfNote) return
         const entry = staves.find((s) => s.id === staffId)?.notes.find((n) => n.id === id)
         if (!entry?.dynamic) return
         const bottomY = rowBottom.get(`${staffId}:${systemIndex}`)
@@ -520,8 +568,10 @@ export function InteractiveStave() {
     // pozițiile notelor pentru cursorul de redare: x absolut (după formatare),
     // rândul și nota următoare din același portativ (ținta alunecării)
     const noteMeta = new Map<string, { x: number; systemIndex: number; nextId: string | null }>()
-    renderedNotes.forEach(({ id, staveNote, systemIndex }) => {
-      noteMeta.set(id, { x: staveNote.getAbsoluteX(), systemIndex, nextId: null })
+    renderedNotes.forEach(({ id, staveNote, systemIndex, firstOfNote }) => {
+      // o notă spartă peste bară are mai multe fragmente — cursorul pornește de
+      // la primul (începutul notei)
+      if (firstOfNote) noteMeta.set(id, { x: staveNote.getAbsoluteX(), systemIndex, nextId: null })
     })
     staves.forEach((staff) => {
       staff.notes.forEach((entry, i) => {
@@ -558,10 +608,11 @@ export function InteractiveStave() {
       halfW: number
       halfH: number
     }[] = []
-    renderedNotes.forEach(({ id, staffId, staveNote, isRest }) => {
+    renderedNotes.forEach(({ id, staffId, staveNote, isRest, firstOfNote }) => {
       const el = staveNote.getSVGElement()
       if (el) {
-        svgNoteElsRef.current.set(id, el)
+        // evidențierea la redare țintește începutul notei (primul fragment)
+        if (firstOfNote) svgNoteElsRef.current.set(id, el)
         // grupul notei nu interceptează click-uri — totul trece prin handler-ul SVG
         el.style.pointerEvents = "none"
       }
@@ -591,9 +642,34 @@ export function InteractiveStave() {
       })
     })
 
+    // x-urile capetelor fiecărei note (un acord cu capete deplasate ocupă mai
+    // mult decât linia codiței) — folosite ca să găsim coloana corectă și pe
+    // partea dreaptă a acordului, nu doar în jurul codiței
+    const noteHeadXs = new Map<string, number[]>()
+    for (const h of noteHits) {
+      const arr = noteHeadXs.get(h.id)
+      if (arr) arr.push(h.x)
+      else noteHeadXs.set(h.id, [h.x])
+    }
+
     // click pe un portativ (în afara unei note) -> adăugăm o notă în el;
     // Ctrl/Cmd+click -> bifează portativul pentru redare parțială
     if (svgEl) {
+      // Convertește coordonatele ecranului în coordonatele INTERNE ale SVG-ului.
+      // VexFlow pune un viewBox; dacă o regulă CSS scalează SVG-ul (lățimea redată
+      // ≠ atributul), o simplă scădere `clientY - rect.top` dă pixeli randați, nu
+      // coordonate SVG — iar eroarea crește cu Y, mutând click-urile de pe
+      // portativul de jos pe cel de sus. getScreenCTM ține cont de scalare/viewBox.
+      const clientToSvg = (clientX: number, clientY: number) => {
+        const ctm = svgEl.getScreenCTM()
+        if (!ctm) {
+          const r = svgEl.getBoundingClientRect()
+          return { x: clientX - r.left, y: clientY - r.top }
+        }
+        const p = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse())
+        return { x: p.x, y: p.y }
+      }
+
       // --- marquee: Shift+drag desenează un dreptunghi care selectează notele
       // dinăuntru (capul lor). La final suprimăm click-ul, ca să nu adauge notă.
       let suppressClick = false
@@ -602,9 +678,7 @@ export function InteractiveStave() {
 
       const onMarqueeMove = (e: MouseEvent) => {
         if (!marqueeStart || !marqueeRect) return
-        const box = svgEl.getBoundingClientRect()
-        const x = e.clientX - box.left
-        const y = e.clientY - box.top
+        const { x, y } = clientToSvg(e.clientX, e.clientY)
         marqueeRect.setAttribute("x", String(Math.min(x, marqueeStart.x)))
         marqueeRect.setAttribute("y", String(Math.min(y, marqueeStart.y)))
         marqueeRect.setAttribute("width", String(Math.abs(x - marqueeStart.x)))
@@ -619,9 +693,7 @@ export function InteractiveStave() {
         marqueeRect = null
         marqueeStart = null
         if (!start) return
-        const box = svgEl.getBoundingClientRect()
-        const endX = e.clientX - box.left
-        const endY = e.clientY - box.top
+        const { x: endX, y: endY } = clientToSvg(e.clientX, e.clientY)
         // sub un prag e de fapt un Shift+click (extinde intervalul) — îl lăsăm să treacă
         if (Math.hypot(endX - start.x, endY - start.y) < 6) return
         suppressClick = true
@@ -648,8 +720,7 @@ export function InteractiveStave() {
         if (!event.shiftKey) return
         // împiedicăm selecția de text a paginii în timpul tragerii
         event.preventDefault()
-        const box = svgEl.getBoundingClientRect()
-        marqueeStart = { x: event.clientX - box.left, y: event.clientY - box.top }
+        marqueeStart = clientToSvg(event.clientX, event.clientY)
         marqueeRect = document.createElementNS(SVG_NS, "rect")
         marqueeRect.setAttribute("x", String(marqueeStart.x))
         marqueeRect.setAttribute("y", String(marqueeStart.y))
@@ -671,27 +742,49 @@ export function InteractiveStave() {
           suppressClick = false
           return
         }
-        const rect = svgEl.getBoundingClientRect()
-        const clickX = event.clientX - rect.left
-        const clickY = event.clientY - rect.top
+        const { x: clickX, y: clickY } = clientToSvg(event.clientX, event.clientY)
 
-        // ±8px ≈ o treaptă și jumătate în jurul liniilor — suficient cât să nu
-        // fie frustrant de precis, dar fără să se suprapună cu portativul vecin
-        const row = rows.find((r) => clickY >= r.topY - 8 && clickY <= r.bottomY + 8)
+        // ±8px ≈ o treaptă și jumătate în jurul liniilor. Dacă mai multe
+        // portative se potrivesc (rar, la suprapunere), îl alegem pe cel mai
+        // apropiat pe verticală — altfel un click pe portativul de jos putea
+        // nimeri portativul de sus și nota ajungea pe portativul greșit.
+        const row = rows
+          .filter((r) => clickY >= r.topY - 8 && clickY <= r.bottomY + 8)
+          .sort(
+            (a, b) =>
+              Math.abs(clickY - (a.topY + a.bottomY) / 2) - Math.abs(clickY - (b.topY + b.bottomY) / 2),
+          )[0]
 
         // în afara liniilor portativului, singurele ținte sunt capetele de notă
-        // cu linii suplimentare (deasupra/dedesubt) — hit pe bbox-ul glyph-ului
+        // cu linii suplimentare (deasupra/dedesubt) — hit pe bbox-ul glyph-ului.
+        // Restrângem la portativul cel mai apropiat pe verticală, ca un click în
+        // spațiul dintre portative să NU selecteze o notă de pe celălalt portativ.
         if (!row) {
+          let nearestStaffId: string | null = null
+          let nearestDist = Infinity
+          for (const r of rows) {
+            const d = clickY < r.topY ? r.topY - clickY : clickY > r.bottomY ? clickY - r.bottomY : 0
+            if (d < nearestDist) {
+              nearestDist = d
+              nearestStaffId = r.staffId
+            }
+          }
           const headHit = noteHits
             .filter(
               (h) =>
-                Math.abs(h.x - clickX) <= h.halfW + 3 && Math.abs(h.y - clickY) <= h.halfH + 2,
+                h.staffId === nearestStaffId &&
+                Math.abs(h.x - clickX) <= h.halfW + 3 &&
+                Math.abs(h.y - clickY) <= h.halfH + 2,
             )
             .sort(
               (a, b) =>
                 Math.hypot(a.x - clickX, a.y - clickY) - Math.hypot(b.x - clickX, b.y - clickY),
             )[0]
-          if (!headHit) return
+          if (!headHit) {
+            // click pe gol (între/în afara portativelor) — revine la „nimic selectat"
+            if (selectedId) dispatch({ type: "selectNote", id: null })
+            return
+          }
           if (event.ctrlKey || event.metaKey) {
             dispatch({ type: "toggleStaffSelection", staffId: headHit.staffId })
           } else if (event.altKey) {
@@ -709,6 +802,26 @@ export function InteractiveStave() {
           return
         }
 
+        // un cap de notă precis (inclusiv capetele deplasate stânga/dreapta ale
+        // unui acord, ex. secundele) — selectează exact acea înălțime. Are
+        // prioritate înaintea logicii de coloană, care altfel ar rata capetele
+        // deplasate și ar insera o notă nouă în loc să le selecteze.
+        const headHit = noteHits
+          .filter(
+            (h) =>
+              h.staffId === row.staffId &&
+              Math.abs(h.x - clickX) <= h.halfW + 3 &&
+              Math.abs(h.y - clickY) <= h.halfH + 2,
+          )
+          .sort(
+            (a, b) =>
+              Math.hypot(a.x - clickX, a.y - clickY) - Math.hypot(b.x - clickX, b.y - clickY),
+          )[0]
+        if (headHit) {
+          dispatch({ type: "selectNote", id: headHit.id, pitchIndex: headHit.pitchIndex })
+          return
+        }
+
         // ignorăm zona cheii / armurii / măsurii din stânga primei măsuri
         if (clickX < contentLeft + headerWidth) return
 
@@ -719,9 +832,18 @@ export function InteractiveStave() {
         //  - treaptă pe care nota o ARE deja -> selectăm exact acel cap
         //  - treaptă nouă -> o adăugăm la acord
         //  - pauză -> o selectăm
-        const columnTarget = renderedNotes.find(
-          (rn) => rn.staffId === row.staffId && Math.abs(rn.staveNote.getAbsoluteX() - clickX) < 12,
-        )
+        // ATENȚIE: doar notele de pe ACELAȘI rând (sistem) — x-ul se repetă pe
+        // fiecare rând, deci fără filtrul pe systemIndex un click pe portativul
+        // din rândul de jos ar nimeri nota de la același x din rândul de sus
+        const columnTarget = renderedNotes
+          .filter((rn) => rn.staffId === row.staffId && rn.systemIndex === row.systemIndex)
+          .map((rn) => {
+            const xs = noteHeadXs.get(rn.id) ?? [rn.staveNote.getAbsoluteX()]
+            const dist = Math.min(...xs.map((x) => Math.abs(x - clickX)))
+            return { rn, dist }
+          })
+          .filter((c) => c.dist < 14)
+          .sort((a, b) => a.dist - b.dist)[0]?.rn
         if (columnTarget) {
           const entry = staves
             .find((s) => s.id === row.staffId)
@@ -758,9 +880,24 @@ export function InteractiveStave() {
         // în timpul construirii unei selecții) — astea acționează doar pe note
         if (event.shiftKey || event.altKey) return
 
-        // inserăm la poziția orizontală a click-ului: înaintea primei note aflate
-        // la dreapta lui (comparat pe rând + x, fiindcă x se repetă pe rânduri);
-        // fără una, nota se adaugă la final
+        // dacă s-a dat click DINCOLO de notele portativului (într-o măsură goală
+        // de mai târziu), umplem golul cu pauze și punem nota la măsura click-ului
+        // — altfel nota s-ar lipi de ultima notă existentă (apărând „mai sus")
+        const span = measureSpans.find(
+          (m) => m.systemIndex === row.systemIndex && clickX >= m.xStart && clickX < m.xEnd,
+        )
+        const contentMeasures = staffMeasures.get(row.staffId)?.length ?? 0
+        if (span && span.measureIndex >= contentMeasures) {
+          const staffObj = staves.find((s) => s.id === row.staffId)
+          const contentBeats = staffObj ? staffObj.notes.reduce((sum, n) => sum + entryBeats(n), 0) : 0
+          const gapBeats = span.measureIndex * beatsPerMeasure - contentBeats
+          dispatch({ type: "addNoteAfterGap", staffId: row.staffId, pitch, gapBeats: Math.max(0, gapBeats) })
+          return
+        }
+
+        // în interiorul conținutului: inserăm la poziția orizontală a click-ului
+        // — înaintea primei note aflate la dreapta lui (comparat pe rând + x,
+        // fiindcă x se repetă pe rânduri); fără una, nota se adaugă la final
         const insertBefore = renderedNotes.find(
           (rn) =>
             rn.staffId === row.staffId &&
@@ -961,6 +1098,17 @@ export function InteractiveStave() {
         }
       }
 
+      // Escape — revine la „nimic selectat" (și iese din modul N). Important:
+      // inserarea din tastatură (Enter / literele din modul N) se face mereu
+      // DUPĂ nota selectată, deci fără deselectare nu puteai adăuga liber la
+      // finalul portativului.
+      if (event.key === "Escape" && !hasModifier) {
+        event.preventDefault()
+        setNoteInputMode(false)
+        dispatch({ type: "selectNote", id: null })
+        return
+      }
+
       // N comută modul de introducere a notelor din tastatură (ca în MuseScore)
       if (event.key.toLowerCase() === "n" && !hasModifier) {
         event.preventDefault()
@@ -979,11 +1127,6 @@ export function InteractiveStave() {
       // în modul de introducere, literele C–B devin note — duratele se aleg cu
       // cifrele 1–5, pauza cu 0 (literele Q W E R T / A S D F G sunt ocupate)
       if (noteInputMode && !hasModifier) {
-        if (event.key === "Escape") {
-          event.preventDefault()
-          setNoteInputMode(false)
-          return
-        }
         const step = NOTE_KEYS[event.key.toLowerCase()]
         if (step) {
           event.preventDefault()
@@ -999,6 +1142,13 @@ export function InteractiveStave() {
         if (digitDuration) {
           event.preventDefault()
           dispatch({ type: "setDuration", duration: digitDuration })
+          return
+        }
+        // Q deselectează FĂRĂ a ieși din modul N (Esc iese de tot) — ca să poți
+        // introduce note la finalul portativului fără a părăsi introducerea
+        if (event.key.toLowerCase() === "q") {
+          event.preventDefault()
+          dispatch({ type: "selectNote", id: null })
           return
         }
         // celelalte litere de comenzi din modul normal nu fac nimic aici
@@ -1090,6 +1240,7 @@ export function InteractiveStave() {
             (întreagă → șaisprezecime) · <span className="text-foreground">.</span> punct ·{" "}
             <span className="text-foreground">[ ] \</span> alterație ·{" "}
             <span className="text-foreground">↑ / ↓</span> ajustează înălțimea ·{" "}
+            <span className="text-foreground">Q</span> deselectează (adaugi la final) ·{" "}
             <span className="text-foreground">N / Esc</span> ieșire
           </span>
         </p>
@@ -1107,6 +1258,7 @@ export function InteractiveStave() {
           <span className="text-foreground">P</span> notă ↔ pauză ·{" "}
           <span className="text-foreground">L</span> legato ·{" "}
           <span className="text-foreground">Delete</span> șterge ·{" "}
+          <span className="text-foreground">Esc</span> deselectează (adaugi liber la final) ·{" "}
           <span className="text-foreground">Shift+click</span> / <span className="text-foreground">Shift+←→</span>{" "}
           / <span className="text-foreground">Shift+drag</span> selectează un interval ·{" "}
           <span className="text-foreground">Alt+click</span> adaugă/scoate o notă ·{" "}

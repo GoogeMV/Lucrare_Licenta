@@ -36,6 +36,33 @@ export const DURATION_SYMBOLS: Record<Duration, string> = {
 
 export const DURATIONS: Duration[] = ["whole", "half", "quarter", "eighth", "sixteenth"]
 
+/** Valorile de notă oferite ca unitate de bătaie pentru indicația de tempo
+ *  (inclusiv variantele cu punct, ex. ♩. = 90 în 6/8) */
+export const TEMPO_BEAT_CHOICES: { duration: Duration; dotted: boolean }[] = [
+  { duration: "whole", dotted: false },
+  { duration: "half", dotted: false },
+  { duration: "half", dotted: true },
+  { duration: "quarter", dotted: false },
+  { duration: "quarter", dotted: true },
+  { duration: "eighth", dotted: false },
+  { duration: "eighth", dotted: true },
+  { duration: "sixteenth", dotted: false },
+]
+
+/**
+ * BPM efectiv în pătrimi pentru redare/metronom, separat de indicația notată:
+ * numărul notat × valoarea unității de bătaie (în pătrimi, +50% dacă e cu punct)
+ * × procentul de viteză de redare / 100. Ex. „♪ = 120" la 100% = 60 pătrimi/min.
+ */
+export function playbackQuarterBpm(
+  notatedTempo: number,
+  beat: Duration,
+  beatDotted: boolean,
+  ratePercent: number,
+): number {
+  return notatedTempo * DURATION_BEATS[beat] * (beatDotted ? 1.5 : 1) * (ratePercent / 100)
+}
+
 /**
  * Taste rapide pentru durate (ca în MuseScore — Q/W/E/R/T pe rândul de sus
  * al tastaturii): apăsarea uneia setează durata curentă de input și, dacă

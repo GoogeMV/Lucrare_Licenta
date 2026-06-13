@@ -9,9 +9,9 @@ import { useScoreEditor } from "@/state/scoreEditorContext"
 import {
   DURATION_HOTKEY_LABELS,
   DURATION_LABELS,
-  DURATION_SYMBOLS,
   DURATIONS,
 } from "@/lib/notation/duration"
+import { NoteValueIcon } from "@/components/notation/NoteValueIcon"
 import {
   ACCIDENTAL_HOTKEY_LABELS,
   ACCIDENTAL_LABELS,
@@ -184,7 +184,7 @@ function DurationGroup() {
                     : "border-border bg-surface-hover text-foreground hover:border-primary/60 hover:text-primary",
                 )}
               >
-                {DURATION_SYMBOLS[duration]}
+                <NoteValueIcon duration={duration} />
               </TooltipTrigger>
               <TooltipContent>
                 {DURATION_LABELS[duration]} <span className="opacity-60">({DURATION_HOTKEY_LABELS[duration]})</span>

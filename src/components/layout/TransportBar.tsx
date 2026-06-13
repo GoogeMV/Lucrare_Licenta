@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { Play, Square, RotateCcw, Loader2 } from "lucide-react"
 import { useScoreEditor } from "@/state/scoreEditorContext"
+import { playbackQuarterBpm } from "@/lib/notation/duration"
 import { ScorePlayer } from "@/lib/audio/playback"
 import { Metronome } from "@/lib/audio/metronome"
 import { emitPlaybackHighlight } from "@/lib/audio/playbackHighlight"
@@ -14,13 +15,16 @@ import { emitPlaybackHighlight } from "@/lib/audio/playbackHighlight"
  * ca să nu re-randăm partitura la fiecare notă — vezi lib/audio/playbackHighlight).
  */
 export function TransportBar() {
-  const { staves, activeStaffId, selectedStaffIds, timeSignature, meta, setMeta, dispatch } = useScoreEditor()
+  const { staves, activeStaffId, selectedStaffIds, timeSignature, meta, playbackRate, setPlaybackRate, dispatch } =
+    useScoreEditor()
   const [isPlaying, setIsPlaying] = useState(false)
   // adevărat cât timp se descarcă eșantioanele instrumentelor (doar primul Play)
   const [isPreparing, setIsPreparing] = useState(false)
   const [metronomeOn, setMetronomeOn] = useState(false)
-  // tempo-ul e parte din piesă (indicația ♩=X de pe foaie) — trăiește în meta
-  const tempo = meta.tempo
+  // BPM-ul efectiv în pătrimi: indicația notată (unitate de bătaie × număr) ajustată
+  // cu viteza de redare. Tempo-ul notat e al piesei (în meta); viteza de redare e
+  // un reglaj separat „pe parcurs", care nu schimbă indicația de pe foaie.
+  const playbackBpm = playbackQuarterBpm(meta.tempo, meta.tempoBeat, meta.tempoBeatDotted, playbackRate)
 
   // un singur player și un singur metronom pe toată durata componentei
   const playerRef = useRef<ScorePlayer | null>(null)
@@ -46,12 +50,12 @@ export function TransportBar() {
     const metronome = metronomeRef.current
     if (!metronome) return
     if (metronomeOn && !isPlaying) {
-      void metronome.start(tempo, timeSignature)
+      void metronome.start(playbackBpm, timeSignature)
     } else {
       metronome.stop()
     }
     return () => metronome.stop()
-  }, [metronomeOn, isPlaying, tempo, timeSignature])
+  }, [metronomeOn, isPlaying, playbackBpm, timeSignature])
 
   function togglePlay() {
     const player = playerRef.current
@@ -78,7 +82,7 @@ export function TransportBar() {
     // play() se rezolvă după programarea notelor (include descărcarea eșantioanelor)
     setIsPreparing(true)
     void player
-      .play(parts, tempo, {
+      .play(parts, playbackBpm, {
         metronome: metronomeOn,
         timeSignature,
         highlightPartIndex,
@@ -128,16 +132,17 @@ export function TransportBar() {
       </div>
 
       <div className="flex flex-1 items-center justify-center gap-3">
-        <span className="text-xs text-foreground-muted">Tempo</span>
+        <span className="text-xs text-foreground-muted">Viteză redare</span>
         <Slider
-          label="Tempo"
+          label="Viteză redare"
           className="w-40"
-          min={40}
-          max={240}
-          step={1}
-          value={[tempo]}
-          onValueChange={(v) => setMeta({ tempo: Array.isArray(v) ? v[0] : v })}
+          min={50}
+          max={200}
+          step={5}
+          value={[playbackRate]}
+          onValueChange={(v) => setPlaybackRate(Array.isArray(v) ? v[0] : v)}
         />
+        <span className="w-10 text-xs tabular-nums text-foreground-muted">{playbackRate}%</span>
       </div>
 
       <div className="flex items-center gap-2">

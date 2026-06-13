@@ -1,4 +1,4 @@
-import type { Staff, TimeSignature } from "@/types/score"
+import type { Duration, Staff, TimeSignature } from "@/types/score"
 
 /**
  * Persistența partiturii în `localStorage` (un singur slot, versionat).
@@ -17,13 +17,26 @@ export interface SavedScore {
   title?: string
   composer?: string
   tempo?: number
+  /** Unitatea de bătaie a indicației de tempo (♩, ♪…) */
+  tempoBeat?: Duration
+  /** Dacă unitatea de bătaie are punct de prelungire (ex. ♩.) */
+  tempoBeatDotted?: boolean
+  /** Indicație liberă de tempo/expresie (ex. „Adagietto") */
+  tempoText?: string
 }
 
 /** Salvează partitura; întoarce `false` dacă scrierea eșuează (ex. cotă plină) */
 export function saveScore(
   staves: Staff[],
   timeSignature: TimeSignature,
-  meta?: { title: string; composer: string; tempo: number },
+  meta?: {
+    title: string
+    composer: string
+    tempo: number
+    tempoBeat: Duration
+    tempoBeatDotted: boolean
+    tempoText: string
+  },
 ): boolean {
   const payload: SavedScore = {
     version: 1,
@@ -33,6 +46,9 @@ export function saveScore(
     title: meta?.title,
     composer: meta?.composer,
     tempo: meta?.tempo,
+    tempoBeat: meta?.tempoBeat,
+    tempoBeatDotted: meta?.tempoBeatDotted,
+    tempoText: meta?.tempoText,
   }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))

@@ -13,6 +13,7 @@ import type {
 } from "@/types/score"
 import { nearestPitchWithStep, pitchIndex, stepDown, stepUp } from "@/lib/notation/pitch"
 import { clefsForInstrument } from "@/lib/notation/instrument"
+import { decompose } from "@/lib/notation/measure"
 
 /**
  * Generatoare de id-uri (efecte secundare, nu funcții pure) — centralizate aici
@@ -124,6 +125,7 @@ export type ScoreAction =
   | { type: "pasteNotes"; entries: NoteEntry[] }
   | { type: "moveSelection"; direction: "prev" | "next" }
   | { type: "addNoteAtPitch"; staffId: string; pitch: Pitch; beforeId?: string }
+  | { type: "addNoteAfterGap"; staffId: string; pitch: Pitch; gapBeats: number }
   | { type: "addPitchToNote"; noteId: string; pitch: Pitch }
   | { type: "insertNote" }
   | { type: "insertNoteWithStep"; step: Step }
@@ -383,6 +385,30 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
         return { ...s, notes }
       })
       return { ...next, activeStaffId: action.staffId, ...selectSingle(entry.id) }
+    }
+
+    case "addNoteAfterGap": {
+      // click pe un portativ dincolo de notele lui existente: umplem golul cu
+      // pauze (până la măsura în care s-a dat click), apoi adăugăm nota. Așa
+      // nota apare unde s-a dat click, nu lipită de ultima notă existentă.
+      const rests: NoteEntry[] = decompose(action.gapBeats).map((piece) => ({
+        id: nextId(),
+        type: "rest",
+        pitches: [DEFAULT_PITCH],
+        duration: piece.duration,
+        dotted: piece.dotted,
+      }))
+      const note: NoteEntry = {
+        id: nextId(),
+        type: "note",
+        pitches: [action.pitch],
+        duration: state.selectedDuration,
+      }
+      const next = updateStaff(state, action.staffId, (s) => ({
+        ...s,
+        notes: [...s.notes, ...rests, note],
+      }))
+      return { ...next, activeStaffId: action.staffId, ...selectSingle(note.id) }
     }
 
     case "addPitchToNote": {

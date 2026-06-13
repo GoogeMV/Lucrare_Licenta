@@ -5,6 +5,7 @@ import {
   type HistoryAction,
   type ScoreState,
 } from "@/state/scoreReducer"
+import type { Duration } from "@/types/score"
 
 /**
  * Modul de afișare al partiturii (preferință de UI, nu face parte din modelul
@@ -20,8 +21,14 @@ export type ViewMode = "page" | "continuous"
 export interface ScoreMeta {
   title: string
   composer: string
-  /** Tempo în pătrimi pe minut (indicația ♩ = X de pe foaie) */
+  /** Numărul din indicația de tempo notată (ex. 120 din „♩ = 120") */
   tempo: number
+  /** Unitatea de bătaie a indicației de tempo notate (♩, ♪, 𝅗𝅥…) — implicit pătrimea */
+  tempoBeat: Duration
+  /** Dacă unitatea de bătaie a tempo-ului are punct de prelungire (ex. ♩.) */
+  tempoBeatDotted: boolean
+  /** Indicație liberă de tempo/expresie de pe foaie (ex. „Adagietto", „Pianissimo") */
+  tempoText: string
 }
 
 interface ScoreEditorValue extends ScoreState {
@@ -32,6 +39,10 @@ interface ScoreEditorValue extends ScoreState {
   setMeta: (changes: Partial<ScoreMeta>) => void
   viewMode: ViewMode
   setViewMode: (mode: ViewMode) => void
+  /** Viteza de redare (%, implicit 100) — separată de tempo-ul notat; nu se
+   *  salvează și nu intră în undo (reglaj de practică „pe parcurs") */
+  playbackRate: number
+  setPlaybackRate: (percent: number) => void
 }
 
 const ScoreEditorContext = createContext<ScoreEditorValue | null>(null)
@@ -44,7 +55,15 @@ const ScoreEditorContext = createContext<ScoreEditorValue | null>(null)
 export function ScoreEditorProvider({ children }: { children: ReactNode }) {
   const [history, dispatch] = useReducer(historyReducer, initialHistoryState)
   const [viewMode, setViewMode] = useState<ViewMode>("page")
-  const [meta, setMetaState] = useState<ScoreMeta>({ title: "", composer: "", tempo: 120 })
+  const [playbackRate, setPlaybackRate] = useState(100)
+  const [meta, setMetaState] = useState<ScoreMeta>({
+    title: "",
+    composer: "",
+    tempo: 120,
+    tempoBeat: "quarter",
+    tempoBeatDotted: false,
+    tempoText: "",
+  })
 
   return (
     <ScoreEditorContext.Provider
@@ -57,6 +76,8 @@ export function ScoreEditorProvider({ children }: { children: ReactNode }) {
         setMeta: (changes) => setMetaState((current) => ({ ...current, ...changes })),
         viewMode,
         setViewMode,
+        playbackRate,
+        setPlaybackRate,
       }}
     >
       {children}

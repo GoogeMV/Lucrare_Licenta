@@ -44,14 +44,21 @@ function FileMenu() {
     if (!saved) return
     if (!window.confirm("Înlocuiești partitura curentă cu cea salvată?")) return
     dispatch({ type: "loadScore", staves: saved.staves, timeSignature: saved.timeSignature })
-    setMeta({ title: saved.title ?? "", composer: saved.composer ?? "", tempo: saved.tempo ?? 120 })
+    setMeta({
+      title: saved.title ?? "",
+      composer: saved.composer ?? "",
+      tempo: saved.tempo ?? 120,
+      tempoBeat: saved.tempoBeat ?? "quarter",
+      tempoBeatDotted: saved.tempoBeatDotted ?? false,
+      tempoText: saved.tempoText ?? "",
+    })
   }
 
   function handleNew() {
     setOpen(false)
     if (!window.confirm("Începi o partitură nouă? Modificările nesalvate se pierd.")) return
     dispatch({ type: "newScore" })
-    setMeta({ title: "", composer: "", tempo: 120 })
+    setMeta({ title: "", composer: "", tempo: 120, tempoBeat: "quarter", tempoBeatDotted: false, tempoText: "" })
   }
 
   return (

@@ -1,9 +1,9 @@
 import type { Accidental, Articulation, Clef, Duration, Staff, TimeSignature } from "@/types/score"
-import { entryBeats } from "@/lib/notation/duration"
+import { DURATION_BEATS, entryBeats } from "@/lib/notation/duration"
 import { DYNAMIC_MUSICXML_TAGS } from "@/lib/notation/dynamics"
 import { keyAccidentalMap, keyFifths } from "@/lib/notation/keySignature"
 import { measureQuarters } from "@/lib/notation/timeSignature"
-import { splitIntoMeasures } from "@/lib/notation/measure"
+import { splitIntoMeasures, type MeasureFragment } from "@/lib/notation/measure"
 
 /**
  * Export MusicXML (score-partwise 3.1) — formatul standard de schimb pentru
@@ -57,13 +57,15 @@ function escapeXml(text: string): string {
 export function scoreToMusicXML(
   staves: Staff[],
   timeSignature: TimeSignature,
-  meta?: { title?: string; composer?: string; tempo?: number },
+  meta?: { title?: string; composer?: string; tempo?: number; tempoBeat?: Duration; tempoBeatDotted?: boolean },
 ): string {
   const beatsPerMeasure = measureQuarters(timeSignature)
   const measureDivisions = Math.round(beatsPerMeasure * DIVISIONS)
   const title = meta?.title?.trim() || "Partitură fără titlu"
   const composer = meta?.composer?.trim()
   const tempo = meta?.tempo ?? 120
+  const tempoBeat: Duration = meta?.tempoBeat ?? "quarter"
+  const tempoBeatDotted = meta?.tempoBeatDotted ?? false
 
   // toate părțile trebuie să aibă același număr de măsuri (cele scurte se
   // completează cu pauze de măsură întreagă), altfel partitura se dezaliniază
@@ -80,7 +82,9 @@ export function scoreToMusicXML(
     .join("\n")
 
   const parts = staves
-    .map((staff, i) => partToXml(staff, i + 1, timeSignature, measureDivisions, totalMeasures, tempo))
+    .map((staff, i) =>
+      partToXml(staff, i + 1, timeSignature, measureDivisions, totalMeasures, tempo, tempoBeat, tempoBeatDotted),
+    )
     .join("\n")
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -105,6 +109,8 @@ function partToXml(
   measureDivisions: number,
   totalMeasures: number,
   tempo: number,
+  tempoBeat: Duration,
+  tempoBeatDotted: boolean,
 ): string {
   const beatsPerMeasure = measureQuarters(timeSignature)
   const measures = splitIntoMeasures(staff.notes, beatsPerMeasure)
@@ -123,7 +129,7 @@ function partToXml(
   })
 
   const measuresXml = measures
-    .map((noteIndices, measureIndex) => {
+    .map((fragments, measureIndex) => {
       const lines: string[] = [`    <measure number="${measureIndex + 1}">`]
 
       // atributele (diviziuni, armură, măsură, cheie) doar pe prima măsură
@@ -141,22 +147,24 @@ function partToXml(
           lines.push(
             '      <direction placement="above">',
             "        <direction-type>",
-            `          <metronome><beat-unit>quarter</beat-unit><per-minute>${tempo}</per-minute></metronome>`,
+            `          <metronome><beat-unit>${TYPE_NAMES[tempoBeat]}</beat-unit>${tempoBeatDotted ? "<beat-unit-dot/>" : ""}<per-minute>${tempo}</per-minute></metronome>`,
             "        </direction-type>",
-            `        <sound tempo="${tempo}"/>`,
+            // sound@tempo e mereu în pătrimi/min (convenția MusicXML)
+            `        <sound tempo="${Math.round(tempo * DURATION_BEATS[tempoBeat] * (tempoBeatDotted ? 1.5 : 1))}"/>`,
             "      </direction>",
           )
         }
       }
 
-      if (noteIndices.length === 0) {
+      if (fragments.length === 0) {
         // măsură goală — pauză de măsură întreagă, ca partida să rămână validă
         lines.push(`      <note><rest measure="yes"/><duration>${measureDivisions}</duration></note>`)
       } else {
-        for (const noteIndex of noteIndices) {
-          const entry = staff.notes[noteIndex]
-          // nuanța se exportă ca <direction> înaintea notei pe care e plasată
-          if (entry.dynamic) {
+        for (const frag of fragments) {
+          const entry = staff.notes[frag.noteIndex]
+          // nuanța se exportă ca <direction> o singură dată, înaintea primului
+          // fragment al notei (nu pe continuările legate peste bară)
+          if (entry.dynamic && !frag.tieStop) {
             lines.push(
               '      <direction placement="below">',
               "        <direction-type>",
@@ -165,7 +173,7 @@ function partToXml(
               "      </direction>",
             )
           }
-          lines.push(noteToXml(entry, keyMap, slurStarts, slurStops))
+          lines.push(noteToXml(entry, frag, keyMap, slurStarts, slurStops))
         }
       }
 
@@ -179,17 +187,22 @@ function partToXml(
 
 function noteToXml(
   entry: Staff["notes"][number],
+  frag: MeasureFragment,
   keyMap: ReturnType<typeof keyAccidentalMap>,
   slurStarts: Map<string, number>,
   slurStops: Map<string, number>,
 ): string {
-  const duration = Math.round(entryBeats(entry) * DIVISIONS)
-  const type = TYPE_NAMES[entry.duration]
+  // durata/valoarea vin din FRAGMENT (o notă spartă peste bară are fragmente cu
+  // valori diferite, legate prin tie); alterațiile/legato/articulațiile sunt
+  // proprietăți ale notei și apar doar pe primul fragment
+  const duration = Math.round(entryBeats({ duration: frag.duration, dotted: frag.dotted }) * DIVISIONS)
+  const type = TYPE_NAMES[frag.duration]
+  const isFirst = !frag.tieStop
 
   if (entry.type === "rest") {
     const lines = ["      <note>", "        <rest/>"]
     lines.push(`        <duration>${duration}</duration>`, `        <type>${type}</type>`)
-    if (entry.dotted) lines.push("        <dot/>")
+    if (frag.dotted) lines.push("        <dot/>")
     lines.push("      </note>")
     return lines.join("\n")
   }
@@ -212,20 +225,34 @@ function noteToXml(
         "        </pitch>",
       )
 
-      lines.push(`        <duration>${duration}</duration>`, `        <type>${type}</type>`)
-      if (entry.dotted) lines.push("        <dot/>")
+      lines.push(`        <duration>${duration}</duration>`)
+      // ligatura care SUNĂ (tie) — pe fiecare notă a acordului
+      if (frag.tieStop) lines.push('        <tie type="stop"/>')
+      if (frag.tieStart) lines.push('        <tie type="start"/>')
+      lines.push(`        <type>${type}</type>`)
+      if (frag.dotted) lines.push("        <dot/>")
 
-      // alterația desenată explicit lângă notă (nu și cea implicită din armură)
-      if (pitch.accidental) {
+      // alterația desenată explicit (doar pe primul fragment; continuările legate
+      // nu repetă alterația)
+      if (isFirst && pitch.accidental) {
         lines.push(`        <accidental>${ACCIDENTAL_NAMES[pitch.accidental]}</accidental>`)
       }
 
       if (pitchIdx === 0) {
-        const articulations = entry.articulations ?? []
-        const slurStart = slurStarts.get(entry.id)
-        const slurStop = slurStops.get(entry.id)
-        if (articulations.length > 0 || slurStart !== undefined || slurStop !== undefined) {
+        const articulations = isFirst ? entry.articulations ?? [] : []
+        const slurStart = isFirst ? slurStarts.get(entry.id) : undefined
+        const slurStop = isFirst ? slurStops.get(entry.id) : undefined
+        const hasNotations =
+          articulations.length > 0 ||
+          slurStart !== undefined ||
+          slurStop !== undefined ||
+          frag.tieStart ||
+          frag.tieStop
+        if (hasNotations) {
           lines.push("        <notations>")
+          // ligatura VIZUALĂ (tied) — perechea grafică a <tie>
+          if (frag.tieStop) lines.push('          <tied type="stop"/>')
+          if (frag.tieStart) lines.push('          <tied type="start"/>')
           // o notă poate fi simultan finalul unei legături și începutul alteia
           if (slurStop !== undefined) lines.push(`          <slur type="stop" number="${slurStop}"/>`)
           if (slurStart !== undefined) lines.push(`          <slur type="start" number="${slurStart}"/>`)
