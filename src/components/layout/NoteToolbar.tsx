@@ -22,6 +22,7 @@ import {
   ARTICULATION_SYMBOLS,
   ARTICULATIONS,
 } from "@/lib/notation/articulation"
+import { DYNAMIC_LABELS, DYNAMICS } from "@/lib/notation/dynamics"
 import type { Accidental, Duration } from "@/types/score"
 
 /** Clasa de bază a unui buton din toolbar */
@@ -114,6 +115,52 @@ function ArticulationGroup() {
 }
 
 /**
+ * Grupul de nuanțe (dinamici): plasează p/mf/f… pe nota selectată (sau pe tot
+ * intervalul selectat). Nuanța rămâne în vigoare la redare până la următoarea.
+ * Butonul nuanței deja aplicate apare activ și, reapăsat, o elimină.
+ */
+function DynamicsGroup() {
+  const { staves, selectedId, selectedIds, dispatch } = useScoreEditor()
+  const disabled = !selectedId
+  // nuanța capului de selecție — pentru evidențierea butonului activ
+  const selectedEntry = staves
+    .find((s) => s.notes.some((n) => n.id === selectedId))
+    ?.notes.find((n) => n.id === selectedId)
+  // activă doar dacă toate notele selectate au aceeași nuanță (selecție omogenă)
+  const activeDynamic =
+    selectedIds.length <= 1 ? selectedEntry?.dynamic : undefined
+
+  return (
+    <div>
+      <h3 className="mb-1.5 text-[11px] font-medium text-foreground-muted">Nuanțe</h3>
+      <div className="grid grid-cols-3 gap-1.5">
+        {DYNAMICS.map((dynamic) => {
+          const active = dynamic === activeDynamic
+          return (
+            <Tooltip key={dynamic}>
+              <TooltipTrigger
+                disabled={disabled}
+                onClick={() => dispatch({ type: "setDynamic", dynamic })}
+                className={cn(
+                  "flex h-9 items-center justify-center rounded-md border text-base italic transition-colors",
+                  active
+                    ? "border-primary bg-primary font-bold text-primary-foreground"
+                    : "border-border bg-surface-hover font-bold text-foreground hover:border-primary/60 hover:text-primary",
+                  DISABLED_BUTTON_CLASS,
+                )}
+              >
+                {dynamic}
+              </TooltipTrigger>
+              <TooltipContent>{DYNAMIC_LABELS[dynamic]}</TooltipContent>
+            </Tooltip>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/**
  * Grupul de durate este "viu": durata aleasă aici devine durata curentă de
  * input și, dacă există o intrare selectată, îi schimbă imediat durata.
  */
@@ -178,6 +225,8 @@ export function NoteToolbar() {
       <AccidentalGroup />
       <Separator />
       <ArticulationGroup />
+      <Separator />
+      <DynamicsGroup />
     </aside>
   )
 }

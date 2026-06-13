@@ -4,6 +4,7 @@ import { entryBeats } from "@/lib/notation/duration"
 import { pitchToToneNote } from "@/lib/notation/pitch"
 import { keyAccidentalMap } from "@/lib/notation/keySignature"
 import { beatSeconds } from "@/lib/notation/timeSignature"
+import { DEFAULT_VELOCITY, DYNAMIC_VELOCITY } from "@/lib/notation/dynamics"
 import { CLICK_BEAT, CLICK_DOWNBEAT, CLICK_DURATION } from "@/lib/audio/metronome"
 import { getInstrumentSound, type InstrumentSound } from "@/lib/audio/instruments"
 
@@ -98,8 +99,12 @@ export class ScorePlayer {
       // fiecare portativ își aplică propria armură (instrumente transpozitorii)
       const keyMap = keyAccidentalMap(part.keySignature)
       let offset = 0 // în secunde, de la începutul redării, pentru acest portativ
+      // volumul curent (nuanța în vigoare) — fiecare nuanță întâlnită îl schimbă
+      // și rămâne până la următoarea, ca în notația tipărită
+      let velocity = DEFAULT_VELOCITY
       for (const entry of part.notes) {
         const durationSeconds = entryBeats(entry) * secondsPerBeat
+        if (entry.dynamic) velocity = DYNAMIC_VELOCITY[entry.dynamic]
 
         if (entry.type === "note") {
           // toate înălțimile intrării (acord) — fără alterație explicită,
@@ -110,7 +115,7 @@ export class ScorePlayer {
           // staccato scurtează nota redată; restul notelor sună ~90% din durată
           const isStaccato = entry.articulations?.includes("staccato")
           const sounded = durationSeconds * (isStaccato ? 0.4 : 0.9)
-          sound.triggerAttackRelease(toneNotes, sounded, startTime + offset)
+          sound.triggerAttackRelease(toneNotes, sounded, startTime + offset, velocity)
         }
 
         // evidențiem nota curentă doar pentru portativul urmărit

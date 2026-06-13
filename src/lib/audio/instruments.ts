@@ -56,7 +56,13 @@ const INSTRUMENT_SAMPLE_FAMILY: Record<string, string> = {
 
 /** Interfața comună folosită de player (Sampler și PolySynth o au amândouă) */
 export interface InstrumentSound {
-  triggerAttackRelease(notes: string | string[], duration: number, time?: number): unknown
+  triggerAttackRelease(
+    notes: string | string[],
+    duration: number,
+    time?: number,
+    /** Volumul atacului (0–1) — folosit pentru nuanțe (p/f); implicit maxim */
+    velocity?: number,
+  ): unknown
   releaseAll(): unknown
 }
 

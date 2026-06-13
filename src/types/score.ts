@@ -29,6 +29,13 @@ export type EntryType = "note" | "rest"
  */
 export type Articulation = "staccato" | "accent" | "tenuto" | "marcato"
 
+/**
+ * Nuanță (dinamică) plasată pe o notă — afișată sub portativ (italic bold) și
+ * aplicată la redare ca volum. Rămâne în vigoare până la următoarea nuanță,
+ * ca în notația tipărită (deci se pune de obicei pe o singură notă, nu pe toate).
+ */
+export type Dynamic = "pp" | "p" | "mp" | "mf" | "f" | "ff"
+
 export interface NoteEntry {
   id: string
   type: EntryType
@@ -42,6 +49,8 @@ export interface NoteEntry {
   dotted?: boolean
   /** Semne de expresie aplicate notei (staccato, accent, tenuto…); absent dacă nu există */
   articulations?: Articulation[]
+  /** Nuanța plasată pe această notă (rămâne în vigoare până la următoarea); absentă dacă nu există */
+  dynamic?: Dynamic
 }
 
 /**

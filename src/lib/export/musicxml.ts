@@ -1,5 +1,6 @@
 import type { Accidental, Articulation, Clef, Duration, Staff, TimeSignature } from "@/types/score"
 import { entryBeats } from "@/lib/notation/duration"
+import { DYNAMIC_MUSICXML_TAGS } from "@/lib/notation/dynamics"
 import { keyAccidentalMap, keyFifths } from "@/lib/notation/keySignature"
 import { measureQuarters } from "@/lib/notation/timeSignature"
 import { splitIntoMeasures } from "@/lib/notation/measure"
@@ -153,7 +154,18 @@ function partToXml(
         lines.push(`      <note><rest measure="yes"/><duration>${measureDivisions}</duration></note>`)
       } else {
         for (const noteIndex of noteIndices) {
-          lines.push(noteToXml(staff.notes[noteIndex], keyMap, slurStarts, slurStops))
+          const entry = staff.notes[noteIndex]
+          // nuanța se exportă ca <direction> înaintea notei pe care e plasată
+          if (entry.dynamic) {
+            lines.push(
+              '      <direction placement="below">',
+              "        <direction-type>",
+              `          <dynamics><${DYNAMIC_MUSICXML_TAGS[entry.dynamic]}/></dynamics>`,
+              "        </direction-type>",
+              "      </direction>",
+            )
+          }
+          lines.push(noteToXml(entry, keyMap, slurStarts, slurStops))
         }
       }
 

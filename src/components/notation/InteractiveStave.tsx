@@ -25,7 +25,7 @@ import { instrumentLabel } from "@/lib/notation/instrument"
 import { onPlaybackHighlight } from "@/lib/audio/playbackHighlight"
 import { auditionPitches } from "@/lib/audio/audition"
 import { measureQuarters, timeSignatureLabel } from "@/lib/notation/timeSignature"
-import type { Clef, Pitch, Step } from "@/types/score"
+import type { Clef, NoteEntry, Pitch, Step } from "@/types/score"
 
 const INK_COLOR = "#e8dcc8"
 const ACCENT_COLOR = "#c9a96e"
@@ -151,6 +151,7 @@ export function InteractiveStave() {
     selectedStaffIds,
     timeSignature,
     selectedId,
+    selectedIds,
     selectedPitchIndex,
     selectedDuration,
     viewMode,
@@ -158,6 +159,20 @@ export function InteractiveStave() {
   } = useScoreEditor()
   // modul de introducere a notelor din tastatură (comutat cu N, ca în MuseScore)
   const [noteInputMode, setNoteInputMode] = useState(false)
+
+  // clipboard pentru copy/paste — date efemere (nu intră în partitură, nici în
+  // istoricul undo), deci trăiesc într-un ref, nu în reducer
+  const clipboardRef = useRef<NoteEntry[]>([])
+  // oglindă a selecției curente pentru handler-ul de tastatură (Ctrl+C citește
+  // selecția fără să re-abonăm listener-ul la fiecare schimbare de selecție)
+  const selectionRef = useRef<{ staves: typeof staves; selectedIds: string[]; selectedId: string | null }>({
+    staves,
+    selectedIds,
+    selectedId,
+  })
+  useEffect(() => {
+    selectionRef.current = { staves, selectedIds, selectedId }
+  }, [staves, selectedIds, selectedId])
 
   // elementele SVG ale notelor randate, pe id — folosite de evidențierea din
   // timpul redării ca să recoloreze direct nota curentă, fără re-randare React
@@ -190,6 +205,8 @@ export function InteractiveStave() {
     container.innerHTML = ""
 
     const contentLeft = LEFT_MARGIN + LABEL_WIDTH
+    // notele din selecția curentă (interval sau notă simplă) — colorate auriu
+    const selectedIdSet = new Set(selectedIds)
 
     // armura e per portativ, dar rezervăm același spațiu de antet pe toate
     // (= cea mai lată armură), ca barele de măsură să rămână aliniate vertical
@@ -358,10 +375,16 @@ export function InteractiveStave() {
               if (entry.dotted) {
                 Dot.buildAndAttach([staveNote], { all: true })
               }
-              const isSelected = entry.id === selectedId
+              const isSelected = selectedIdSet.has(entry.id)
               // cu o înălțime selectată dintr-un ACORD, doar capul ei e auriu
-              // (nota simplă rămâne aurie integral, cu tot cu codiță)
-              const headOnly = isSelected && selectedPitchIndex !== null && !isRest && entry.pitches.length > 1
+              // (nota simplă rămâne aurie integral, cu tot cu codiță); valabil
+              // doar la selecția simplă (un interval colorează note întregi)
+              const headOnly =
+                entry.id === selectedId &&
+                selectedIdSet.size <= 1 &&
+                selectedPitchIndex !== null &&
+                !isRest &&
+                entry.pitches.length > 1
               const noteColor = isSelected && !headOnly ? ACCENT_COLOR : INK_COLOR
               staveNote.setStyle({ fillStyle: noteColor, strokeStyle: noteColor })
               if (headOnly) {
@@ -461,6 +484,30 @@ export function InteractiveStave() {
       })
     })
 
+    // nuanțele (dinamici): text italic bold sub portativ, la x-ul notei pe care
+    // sunt plasate (le desenăm ca <text> SVG direct, ca etichetele/cursorul)
+    if (svgEl) {
+      const rowBottom = new Map<string, number>()
+      rows.forEach((r) => rowBottom.set(`${r.staffId}:${r.systemIndex}`, r.bottomY))
+      renderedNotes.forEach(({ id, staffId, staveNote, systemIndex }) => {
+        const entry = staves.find((s) => s.id === staffId)?.notes.find((n) => n.id === id)
+        if (!entry?.dynamic) return
+        const bottomY = rowBottom.get(`${staffId}:${systemIndex}`)
+        if (bottomY === undefined) return
+        const text = document.createElementNS(SVG_NS, "text")
+        text.setAttribute("x", String(staveNote.getAbsoluteX() - 2))
+        text.setAttribute("y", String(bottomY + 30))
+        text.setAttribute("font-family", "Georgia, serif")
+        text.setAttribute("font-style", "italic")
+        text.setAttribute("font-weight", "bold")
+        text.setAttribute("font-size", "13")
+        text.setAttribute("fill", selectedIdSet.has(id) ? ACCENT_COLOR : INK_COLOR)
+        text.setAttribute("pointer-events", "none")
+        text.textContent = entry.dynamic
+        svgEl.appendChild(text)
+      })
+    }
+
     // după re-randare, vechile elemente SVG nu mai există — golim hărțile
     // folosite de evidențierea din timpul redării și oprim animația cursorului
     svgNoteElsRef.current = new Map()
@@ -547,7 +594,83 @@ export function InteractiveStave() {
     // click pe un portativ (în afara unei note) -> adăugăm o notă în el;
     // Ctrl/Cmd+click -> bifează portativul pentru redare parțială
     if (svgEl) {
+      // --- marquee: Shift+drag desenează un dreptunghi care selectează notele
+      // dinăuntru (capul lor). La final suprimăm click-ul, ca să nu adauge notă.
+      let suppressClick = false
+      let marqueeStart: { x: number; y: number } | null = null
+      let marqueeRect: SVGRectElement | null = null
+
+      const onMarqueeMove = (e: MouseEvent) => {
+        if (!marqueeStart || !marqueeRect) return
+        const box = svgEl.getBoundingClientRect()
+        const x = e.clientX - box.left
+        const y = e.clientY - box.top
+        marqueeRect.setAttribute("x", String(Math.min(x, marqueeStart.x)))
+        marqueeRect.setAttribute("y", String(Math.min(y, marqueeStart.y)))
+        marqueeRect.setAttribute("width", String(Math.abs(x - marqueeStart.x)))
+        marqueeRect.setAttribute("height", String(Math.abs(y - marqueeStart.y)))
+      }
+
+      const onMarqueeUp = (e: MouseEvent) => {
+        window.removeEventListener("mousemove", onMarqueeMove)
+        window.removeEventListener("mouseup", onMarqueeUp)
+        const start = marqueeStart
+        marqueeRect?.remove()
+        marqueeRect = null
+        marqueeStart = null
+        if (!start) return
+        const box = svgEl.getBoundingClientRect()
+        const endX = e.clientX - box.left
+        const endY = e.clientY - box.top
+        // sub un prag e de fapt un Shift+click (extinde intervalul) — îl lăsăm să treacă
+        if (Math.hypot(endX - start.x, endY - start.y) < 6) return
+        suppressClick = true
+        const left = Math.min(endX, start.x)
+        const right = Math.max(endX, start.x)
+        const top = Math.min(endY, start.y)
+        const bottom = Math.max(endY, start.y)
+        // capetele de notă din dreptunghi, grupate pe portativ (selecția trăiește
+        // într-un singur portativ — îl alegem pe cel cu cele mai multe capete)
+        const byStaff = new Map<string, Set<string>>()
+        for (const h of noteHits) {
+          if (h.x < left || h.x > right || h.y < top || h.y > bottom) continue
+          if (!byStaff.has(h.staffId)) byStaff.set(h.staffId, new Set())
+          byStaff.get(h.staffId)!.add(h.id)
+        }
+        let best: Set<string> | null = null
+        for (const ids of byStaff.values()) {
+          if (!best || ids.size > best.size) best = ids
+        }
+        dispatch({ type: "setSelection", ids: best ? [...best] : [] })
+      }
+
+      svgEl.addEventListener("mousedown", (event) => {
+        if (!event.shiftKey) return
+        // împiedicăm selecția de text a paginii în timpul tragerii
+        event.preventDefault()
+        const box = svgEl.getBoundingClientRect()
+        marqueeStart = { x: event.clientX - box.left, y: event.clientY - box.top }
+        marqueeRect = document.createElementNS(SVG_NS, "rect")
+        marqueeRect.setAttribute("x", String(marqueeStart.x))
+        marqueeRect.setAttribute("y", String(marqueeStart.y))
+        marqueeRect.setAttribute("width", "0")
+        marqueeRect.setAttribute("height", "0")
+        marqueeRect.setAttribute("fill", "rgba(201, 169, 110, 0.15)")
+        marqueeRect.setAttribute("stroke", ACCENT_COLOR)
+        marqueeRect.setAttribute("stroke-width", "1")
+        marqueeRect.setAttribute("stroke-dasharray", "4 3")
+        marqueeRect.setAttribute("pointer-events", "none")
+        svgEl.appendChild(marqueeRect)
+        window.addEventListener("mousemove", onMarqueeMove)
+        window.addEventListener("mouseup", onMarqueeUp)
+      })
+
       svgEl.addEventListener("click", (event) => {
+        // click-ul ce încheie un marquee nu trebuie să mai adauge/selecteze nimic
+        if (suppressClick) {
+          suppressClick = false
+          return
+        }
         const rect = svgEl.getBoundingClientRect()
         const clickX = event.clientX - rect.left
         const clickY = event.clientY - rect.top
@@ -571,6 +694,10 @@ export function InteractiveStave() {
           if (!headHit) return
           if (event.ctrlKey || event.metaKey) {
             dispatch({ type: "toggleStaffSelection", staffId: headHit.staffId })
+          } else if (event.altKey) {
+            dispatch({ type: "toggleNoteInSelection", id: headHit.id })
+          } else if (event.shiftKey) {
+            dispatch({ type: "extendSelectionTo", id: headHit.id })
           } else {
             dispatch({ type: "selectNote", id: headHit.id, pitchIndex: headHit.pitchIndex })
           }
@@ -600,6 +727,17 @@ export function InteractiveStave() {
             .find((s) => s.id === row.staffId)
             ?.notes.find((n) => n.id === columnTarget.id)
           if (entry) {
+            // Alt+click comută nota individual în/din selecție (ne-contiguu)
+            if (event.altKey) {
+              dispatch({ type: "toggleNoteInSelection", id: entry.id })
+              return
+            }
+            // Shift+click extinde selecția până la nota/pauza vizată (indiferent
+            // de înălțime), fără să modifice acordul
+            if (event.shiftKey) {
+              dispatch({ type: "extendSelectionTo", id: entry.id })
+              return
+            }
             if (entry.type === "rest") {
               dispatch({ type: "selectNote", id: entry.id })
               return
@@ -615,6 +753,10 @@ export function InteractiveStave() {
             return
           }
         }
+
+        // Shift/Alt+click pe o zonă goală nu inserează nimic (ar fi accidental
+        // în timpul construirii unei selecții) — astea acționează doar pe note
+        if (event.shiftKey || event.altKey) return
 
         // inserăm la poziția orizontală a click-ului: înaintea primei note aflate
         // la dreapta lui (comparat pe rând + x, fiindcă x se repetă pe rânduri);
@@ -636,7 +778,7 @@ export function InteractiveStave() {
     if (container.scrollLeft !== savedScrollLeft) {
       container.scrollLeft = savedScrollLeft
     }
-  }, [staves, activeStaffId, selectedStaffIds, timeSignature, selectedId, selectedPitchIndex, viewMode, dispatch])
+  }, [staves, activeStaffId, selectedStaffIds, timeSignature, selectedId, selectedIds, selectedPitchIndex, viewMode, dispatch])
 
   useEffect(() => {
     draw()
@@ -795,6 +937,28 @@ export function InteractiveStave() {
           dispatch({ type: "redo" })
           return
         }
+
+        // Ctrl+C / Ctrl+X — copiază/taie selecția (notele păstrate în ordinea
+        // din portativ); Ctrl+V — lipește după selecția curentă
+        if ((key === "c" || key === "x") && !event.shiftKey) {
+          const { staves, selectedIds, selectedId } = selectionRef.current
+          const ids = selectedIds.length ? selectedIds : selectedId ? [selectedId] : []
+          const idSet = new Set(ids)
+          const staff = ids.length ? staves.find((s) => s.notes.some((n) => idSet.has(n.id))) : undefined
+          if (staff) {
+            event.preventDefault()
+            clipboardRef.current = staff.notes.filter((n) => idSet.has(n.id))
+            if (key === "x") dispatch({ type: "deleteSelected" })
+          }
+          return
+        }
+        if (key === "v" && !event.shiftKey) {
+          if (clipboardRef.current.length > 0) {
+            event.preventDefault()
+            dispatch({ type: "pasteNotes", entries: clipboardRef.current })
+          }
+          return
+        }
       }
 
       // N comută modul de introducere a notelor din tastatură (ca în MuseScore)
@@ -854,7 +1018,9 @@ export function InteractiveStave() {
 
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         event.preventDefault()
-        dispatch({ type: "moveSelection", direction: event.key === "ArrowRight" ? "next" : "prev" })
+        const direction = event.key === "ArrowRight" ? "next" : "prev"
+        // Shift+←/→ extinde intervalul; fără Shift, mută selecția simplă
+        dispatch(event.shiftKey ? { type: "extendSelection", direction } : { type: "moveSelection", direction })
         return
       }
 
@@ -941,6 +1107,10 @@ export function InteractiveStave() {
           <span className="text-foreground">P</span> notă ↔ pauză ·{" "}
           <span className="text-foreground">L</span> legato ·{" "}
           <span className="text-foreground">Delete</span> șterge ·{" "}
+          <span className="text-foreground">Shift+click</span> / <span className="text-foreground">Shift+←→</span>{" "}
+          / <span className="text-foreground">Shift+drag</span> selectează un interval ·{" "}
+          <span className="text-foreground">Alt+click</span> adaugă/scoate o notă ·{" "}
+          <span className="text-foreground">Ctrl+C / X / V</span> copiază / taie / lipește ·{" "}
           <span className="text-foreground">Ctrl+click pe portativ</span> îl bifează pentru redare parțială
         </p>
       )}
