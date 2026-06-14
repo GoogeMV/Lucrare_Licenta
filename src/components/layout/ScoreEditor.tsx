@@ -162,7 +162,7 @@ export function ScoreEditor() {
             dispatch({ type: "addStaff", instrument })
           }}
           className={cn(
-            "w-full max-w-4xl rounded-md border border-border/60 bg-surface/60 px-8 py-7 shadow-2xl shadow-black/40 transition-shadow",
+            "w-full max-w-4xl rounded-md border border-border/60 bg-sheet px-8 py-7 shadow-2xl shadow-black/40 transition-shadow",
             isDragOver && "border-primary ring-2 ring-primary/60",
           )}
         >

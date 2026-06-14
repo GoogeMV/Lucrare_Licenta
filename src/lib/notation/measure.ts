@@ -17,6 +17,10 @@ export interface MeasureFragment {
   tieStart?: boolean
   /** Legată (tie) de fragmentul anterior al aceleiași note */
   tieStop?: boolean
+  /** Numărul de note al tuplet-ului (3 = triolet), propagat din intrare */
+  tuplet?: number
+  /** Id-ul grupului de tuplet, propagat din intrare (pentru bracket + „3") */
+  tupletId?: string
 }
 
 /**
@@ -60,7 +64,7 @@ export function decompose(beats: number): { duration: Duration; dotted?: boolean
  * împărțire. Pauzele se sparg la fel, dar fără ligatură.
  */
 export function splitIntoMeasures(
-  notes: { type?: EntryType; duration: Duration; dotted?: boolean }[],
+  notes: { type?: EntryType; duration: Duration; dotted?: boolean; tuplet?: number; tupletId?: string }[],
   beatsPerMeasure: number,
 ): MeasureFragment[][] {
   const measures: MeasureFragment[][] = []
@@ -74,6 +78,23 @@ export function splitIntoMeasures(
   }
 
   notes.forEach((entry, i) => {
+    // trioletele (durate ne-diadice, ex. 1/3 de timp) NU se descompun și nu se
+    // sparg peste bară — rămân un singur fragment, cu durata lor notată. Dacă nu
+    // mai încap în măsură, închidem măsura curentă și le punem întregi în următoarea.
+    if (entry.tuplet) {
+      if (beatsPerMeasure - beatsInMeasure <= EPS) flush()
+      current.push({
+        noteIndex: i,
+        duration: entry.duration,
+        dotted: entry.dotted,
+        tuplet: entry.tuplet,
+        tupletId: entry.tupletId,
+      })
+      beatsInMeasure += entryBeats(entry)
+      if (beatsInMeasure >= beatsPerMeasure - EPS) flush()
+      return
+    }
+
     let remaining = entryBeats(entry)
     // fragmentele acestei note (ca să marcăm ligaturile între ele la final)
     const entryFrags: MeasureFragment[] = []

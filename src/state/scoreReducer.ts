@@ -13,6 +13,7 @@ import type {
   TimeSignature,
 } from "@/types/score"
 import { nearestPitchWithStep, pitchIndex, pitchSemitone, semitoneToPitch, stepDown, stepUp } from "@/lib/notation/pitch"
+import { smallerDuration } from "@/lib/notation/duration"
 import { clefsForInstrument } from "@/lib/notation/instrument"
 import { decompose } from "@/lib/notation/measure"
 import { tabPosition, tuningForInstrument } from "@/lib/notation/tab"
@@ -39,6 +40,12 @@ function nextGroupId() {
   return `group-${groupCounter}`
 }
 
+let tupletCounter = 0
+function nextTupletId() {
+  tupletCounter += 1
+  return `tuplet-${tupletCounter}`
+}
+
 /**
  * La încărcarea unei partituri salvate, contoarele trebuie aduse peste
  * id-urile existente — altfel notele/portativele noi ar primi id-uri duplicate.
@@ -54,6 +61,7 @@ function syncIdCounters(staves: Staff[]) {
     groupCounter = bump(staff.groupId, "group-", groupCounter)
     for (const note of staff.notes) {
       idCounter = bump(note.id, "note-", idCounter)
+      tupletCounter = bump(note.tupletId, "tuplet-", tupletCounter)
     }
   }
 }
@@ -139,6 +147,7 @@ export type ScoreAction =
   | { type: "setDynamic"; dynamic: Dynamic }
   | { type: "setLyric"; id: string; text: string }
   | { type: "toggleDot" }
+  | { type: "makeTriplet" }
   | { type: "toggleRest" }
   | { type: "toggleSlur" }
   | { type: "setKeySignature"; keySignature: KeySignature }
@@ -192,6 +201,8 @@ function cloneEntry(entry: NoteEntry): Omit<NoteEntry, "id"> {
     articulations: entry.articulations ? [...entry.articulations] : undefined,
     dynamic: entry.dynamic,
     lyric: entry.lyric,
+    tuplet: entry.tuplet,
+    tupletId: entry.tupletId,
   }
 }
 
@@ -617,6 +628,44 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
       const sel = selectedEntries(state)
       const allDotted = sel.length > 0 && sel.every((n) => n.dotted)
       return updateNotesInIds(state, ids, (n) => ({ ...n, dotted: allDotted ? undefined : true }))
+    }
+
+    case "makeTriplet": {
+      // transformă intrarea selectată într-un triolet: o înlocuiește cu 3 intrări
+      // de durata imediat mai mică (ex. pătrime → 3 optimi de triolet), care
+      // ocupă același timp. Prima păstrează nota/acordul; celelalte două sunt
+      // pauze. Refuzat dacă e deja triolet sau prea mic (șaisprezecime).
+      if (!state.selectedId) return state
+      const staff = staffOfNote(state, state.selectedId)
+      if (!staff) return state
+      const idx = staff.notes.findIndex((n) => n.id === state.selectedId)
+      const entry = staff.notes[idx]
+      if (!entry || entry.tuplet) return state
+      const sub = smallerDuration(entry.duration)
+      if (!sub) return state
+      const tupletId = nextTupletId()
+      const first: NoteEntry = {
+        id: nextId(),
+        type: entry.type,
+        pitches: entry.pitches.map((p) => ({ ...p })),
+        duration: sub,
+        tuplet: 3,
+        tupletId,
+        articulations: entry.articulations,
+        dynamic: entry.dynamic,
+        lyric: entry.lyric,
+      }
+      const rest = (): NoteEntry => ({
+        id: nextId(),
+        type: "rest",
+        pitches: [DEFAULT_PITCH],
+        duration: sub,
+        tuplet: 3,
+        tupletId,
+      })
+      const notes = [...staff.notes]
+      notes.splice(idx, 1, first, rest(), rest())
+      return { ...updateStaff(state, staff.id, (s) => ({ ...s, notes })), ...selectSingle(first.id) }
     }
 
     case "toggleRest": {

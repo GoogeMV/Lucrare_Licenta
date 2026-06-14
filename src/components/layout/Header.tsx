@@ -137,7 +137,7 @@ export function Header() {
   const isPage = viewMode === "page"
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-surface px-4">
+    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-bar px-4">
       <div className="flex items-center gap-2">
         <span className="font-heading text-lg font-semibold tracking-tight text-foreground">
           NotationSoft

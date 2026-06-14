@@ -205,6 +205,19 @@ function DurationGroup() {
             <span className="opacity-60">(.)</span>
           </TooltipContent>
         </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            disabled={!selectedId}
+            onClick={() => dispatch({ type: "makeTriplet" })}
+            className={cn(TOOL_BUTTON_CLASS, DISABLED_BUTTON_CLASS, "text-base font-semibold")}
+          >
+            ³
+          </TooltipTrigger>
+          <TooltipContent>
+            Triolet — împarte nota în 3 note egale în același timp{" "}
+            <span className="opacity-60">(Ctrl+3)</span>
+          </TooltipContent>
+        </Tooltip>
       </div>
     </div>
   )
@@ -216,7 +229,7 @@ function DurationGroup() {
  */
 export function NoteToolbar() {
   return (
-    <aside className="flex w-52 shrink-0 flex-col gap-4 border-l border-border bg-surface p-3">
+    <aside className="flex w-52 shrink-0 flex-col gap-4 border-l border-border bg-panel p-3">
       <h2 className="text-xs font-semibold tracking-wide text-foreground-muted uppercase">
         Toolbar note
       </h2>

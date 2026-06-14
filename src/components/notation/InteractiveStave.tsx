@@ -16,10 +16,11 @@ import {
   TabStave,
   TabNote,
   GhostNote,
+  Tuplet,
 } from "vexflow"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { buildStaffPositions, pitchIndex, pitchToVexflowKey, TOP_LINE_PITCH } from "@/lib/notation/pitch"
-import { DURATION_HOTKEYS, REST_HOTKEYS, entryBeats, playbackQuarterBpm, vexflowDurationCode } from "@/lib/notation/duration"
+import { DURATION_HOTKEYS, REST_HOTKEYS, entryBeats, playbackQuarterBpm, tupletNormal, vexflowDurationCode } from "@/lib/notation/duration"
 import { splitIntoMeasures, type MeasureFragment } from "@/lib/notation/measure"
 import { ACCIDENTAL_HOTKEYS, ACCIDENTAL_TO_VEXFLOW } from "@/lib/notation/accidental"
 import { ARTICULATION_TO_VEXFLOW } from "@/lib/notation/articulation"
@@ -173,9 +174,10 @@ export function InteractiveStave() {
   // modul de introducere a notelor din tastatură (comutat cu N, ca în MuseScore)
   const [noteInputMode, setNoteInputMode] = useState(false)
 
-  // editarea de versuri (dublu-click pe o notă): nota în curs de editare, textul
-  // din câmp și poziția (în coordonatele wrapper-ului) a input-ului plutitor
-  const [lyricEdit, setLyricEdit] = useState<{ noteId: string; staffId: string } | null>(null)
+  // modul de versuri (comutat cu M, ca modul N de note): scrii silaba sub nota
+  // SELECTATĂ, iar input-ul plutitor o urmărește. `lyricText` = textul din câmp,
+  // `lyricPos` = poziția (în coordonatele wrapper-ului) a input-ului plutitor.
+  const [lyricMode, setLyricMode] = useState(false)
   const [lyricText, setLyricText] = useState("")
   const [lyricPos, setLyricPos] = useState<{ left: number; top: number } | null>(null)
   const lyricInputRef = useRef<HTMLInputElement>(null)
@@ -450,6 +452,8 @@ export function InteractiveStave() {
 
           const measureFragments = measures[measureIndex]
           if (measureFragments && measureFragments.length > 0) {
+            // grupurile de tuplet din această măsură (bracket + „3"), pe tupletId
+            const measureTuplets = new Map<string, { count: number; notes: StaveNote[] }>()
             const staveNotes = measureFragments.map((frag) => {
               const entry = staff.notes[frag.noteIndex]
               const isRest = entry.type === "rest"
@@ -521,6 +525,12 @@ export function InteractiveStave() {
                   })
                 }
               }
+              // colectăm notele pe grupul de tuplet, ca să desenăm bracket-ul + „3"
+              if (frag.tupletId && frag.tuplet) {
+                const group = measureTuplets.get(frag.tupletId)
+                if (group) group.notes.push(staveNote)
+                else measureTuplets.set(frag.tupletId, { count: frag.tuplet, notes: [staveNote] })
+              }
               // slururile (legato) se leagă de începutul notei — folosim primul fragment
               if (!noteIdToStaveNote.has(entry.id)) noteIdToStaveNote.set(entry.id, staveNote)
               renderedNotes.push({
@@ -548,6 +558,18 @@ export function InteractiveStave() {
             new Formatter().joinVoices([voice]).format([voice], Math.max(formatWidth, 40))
             voice.draw(context, stave)
             beams.forEach((beam) => beam.setContext(context).draw())
+
+            // bracket-urile de tuplet (triolet) + numărul „3", după formatare
+            if (measureTuplets.size > 0) {
+              context.setFillStyle(INK_COLOR)
+              context.setStrokeStyle(INK_COLOR)
+              measureTuplets.forEach(({ count, notes }) => {
+                if (notes.length < 2) return
+                new Tuplet(notes, { numNotes: count, notesOccupied: tupletNormal(count) })
+                  .setContext(context)
+                  .draw()
+              })
+            }
           }
           } // showNotation
 
@@ -705,7 +727,9 @@ export function InteractiveStave() {
         text.setAttribute("font-style", "italic")
         text.setAttribute("font-weight", "bold")
         text.setAttribute("font-size", "13")
-        text.setAttribute("fill", selectedIdSet.has(id) ? ACCENT_COLOR : INK_COLOR)
+        // culoarea prin stil inline (prioritate maximă) — ca atributul `fill` să
+        // nu fie suprascris de stiluri moștenite și textul să iasă crem/auriu
+        text.style.fill = selectedIdSet.has(id) ? ACCENT_COLOR : INK_COLOR
         text.setAttribute("pointer-events", "none")
         text.textContent = entry.dynamic
         svgEl.appendChild(text)
@@ -715,7 +739,7 @@ export function InteractiveStave() {
       // editare nu se desenează — în locul ei plutește input-ul HTML.
       renderedNotes.forEach(({ id, staffId, staveNote, systemIndex, firstOfNote, isRest }) => {
         if (!firstOfNote || isRest) return
-        if (lyricEdit?.noteId === id) return
+        if (lyricMode && selectedId === id) return // se editează acum (input deasupra)
         const entry = staves.find((s) => s.id === staffId)?.notes.find((n) => n.id === id)
         if (!entry?.lyric) return
         const bottomY = rowBottom.get(`${staffId}:${systemIndex}`)
@@ -726,7 +750,7 @@ export function InteractiveStave() {
         text.setAttribute("text-anchor", "middle")
         text.setAttribute("font-family", "Georgia, serif")
         text.setAttribute("font-size", "12")
-        text.setAttribute("fill", selectedIdSet.has(id) ? ACCENT_COLOR : INK_COLOR)
+        text.style.fill = selectedIdSet.has(id) ? ACCENT_COLOR : INK_COLOR
         text.setAttribute("pointer-events", "none")
         text.textContent = entry.lyric
         svgEl.appendChild(text)
@@ -1141,21 +1165,6 @@ export function InteractiveStave() {
         )
         dispatch({ type: "addNoteAtPitch", staffId: row.staffId, pitch, beforeId: insertBefore?.id })
       })
-
-      // dublu-click pe o notă -> deschide editarea de versuri sub ea (pe pauze nu)
-      svgEl.addEventListener("dblclick", (event) => {
-        const { x: cx, y: cy } = clientToSvg(event.clientX, event.clientY)
-        const hit = noteHits
-          .filter((h) => Math.abs(h.x - cx) <= h.halfW + 4 && Math.abs(h.y - cy) <= h.halfH + 4)
-          .sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy))[0]
-        if (!hit) return
-        const staff = staves.find((s) => s.id === hit.staffId)
-        const entry = staff?.notes.find((n) => n.id === hit.id)
-        if (!staff || !entry || entry.type !== "note") return
-        event.preventDefault()
-        setLyricText(entry.lyric ?? "")
-        setLyricEdit({ noteId: hit.id, staffId: staff.id })
-      })
     }
 
     // restaurăm pozițiile de scroll salvate înainte de redesenare (vezi mai sus)
@@ -1165,7 +1174,7 @@ export function InteractiveStave() {
     if (container.scrollLeft !== savedScrollLeft) {
       container.scrollLeft = savedScrollLeft
     }
-  }, [staves, activeStaffId, selectedStaffIds, timeSignature, selectedId, selectedIds, selectedPitchIndex, viewMode, lyricEdit, dispatch])
+  }, [staves, activeStaffId, selectedStaffIds, timeSignature, selectedId, selectedIds, selectedPitchIndex, viewMode, lyricMode, dispatch])
 
   useEffect(() => {
     draw()
@@ -1176,15 +1185,17 @@ export function InteractiveStave() {
     return () => observer.disconnect()
   }, [draw])
 
-  // poziționarea input-ului de versuri sub nota editată. Calculăm din chenarul
-  // real al elementului SVG al notei (ține cont de scroll/scalare), relativ la
-  // wrapper. Repoziționăm la scroll/resize cât timp e deschis.
+  // în modul Versuri, input-ul plutitor urmărește nota SELECTATĂ: îi încarcă
+  // silaba curentă, îl poziționează sub notă (din chenarul real al elementului
+  // SVG — ține cont de scroll/scalare) și îi dă focus. Repoziționăm la scroll/
+  // resize. Sincronizările de stare stau într-o funcție imbricată (`sync`),
+  // nu direct în corpul efectului (regula react-hooks/set-state-in-effect).
   useLayoutEffect(() => {
-    // input-ul se randează doar când lyricEdit ȘI lyricPos sunt setate, deci o
-    // poziție rămasă de la editarea anterioară e inofensivă (nu se mai afișează)
-    if (!lyricEdit) return
+    if (!lyricMode || !selectedId) return
+    const entry = staves.find((s) => s.notes.some((n) => n.id === selectedId))?.notes.find((n) => n.id === selectedId)
+    if (!entry || entry.type !== "note") return
     const reposition = () => {
-      const noteEl = svgNoteElsRef.current.get(lyricEdit.noteId)
+      const noteEl = svgNoteElsRef.current.get(selectedId)
       const wrap = wrapperRef.current
       if (!noteEl || !wrap) return
       const r = noteEl.getBoundingClientRect()
@@ -1192,7 +1203,12 @@ export function InteractiveStave() {
       // centrăm pe notă (input-ul are translateX(-50%)) și coborâm sub portativ
       setLyricPos({ left: r.left - w.left + r.width / 2, top: r.bottom - w.top + 10 })
     }
-    reposition()
+    const sync = () => {
+      setLyricText(entry.lyric ?? "")
+      reposition()
+      lyricInputRef.current?.focus()
+    }
+    sync()
     const scroller = containerRef.current
     scroller?.addEventListener("scroll", reposition)
     window.addEventListener("scroll", reposition, true)
@@ -1202,7 +1218,7 @@ export function InteractiveStave() {
       window.removeEventListener("scroll", reposition, true)
       window.removeEventListener("resize", reposition)
     }
-  }, [lyricEdit])
+  }, [lyricMode, selectedId, staves])
 
   // evidențierea notei curente în timpul redării: recolorăm direct elementele
   // SVG ale notei și mișcăm cursorul vertical — fără dispatch / re-randare React
@@ -1385,6 +1401,12 @@ export function InteractiveStave() {
           }
           return
         }
+        // Ctrl+3 — transformă nota selectată într-un triolet (ca în MuseScore)
+        if (key === "3") {
+          event.preventDefault()
+          dispatch({ type: "makeTriplet" })
+          return
+        }
       }
 
       // Escape — revine la „nimic selectat" (și iese din modul N). Important:
@@ -1454,7 +1476,30 @@ export function InteractiveStave() {
       // N comută modul de introducere a notelor din tastatură (ca în MuseScore)
       if (event.key.toLowerCase() === "n" && !hasModifier) {
         event.preventDefault()
+        setLyricMode(false)
         setNoteInputMode((mode) => !mode)
+        return
+      }
+
+      // M comută modul Versuri: scrii silaba sub nota selectată. Cât timp input-ul
+      // de versuri are focus, tastatura globală nu prinde (target = INPUT), deci nu
+      // există conflict cu shortcut-urile; ieșirea se face din câmp cu Esc. Aici
+      // doar INTRĂM în mod (input-ul nu e încă focusat). Modurile N și M se exclud.
+      if (event.key.toLowerCase() === "m" && !hasModifier) {
+        event.preventDefault()
+        if (lyricMode) {
+          setLyricMode(false)
+          return
+        }
+        setNoteInputMode(false)
+        setLyricMode(true)
+        // dacă nu e selectată o notă, ne mutăm pe prima notă a portativului activ
+        const staff = staves.find((s) => s.notes.some((n) => n.id === selectedId)) ?? staves.find((s) => s.id === activeStaffId)
+        const onNote = staff?.notes.some((n) => n.id === selectedId && n.type === "note")
+        if (!onNote) {
+          const first = staff?.notes.find((n) => n.type === "note")
+          if (first) dispatch({ type: "selectNote", id: first.id })
+        }
         return
       }
 
@@ -1593,6 +1638,7 @@ export function InteractiveStave() {
     activeStaffId,
     selectedDuration,
     noteInputMode,
+    lyricMode,
     meta.tempo,
     meta.tempoBeat,
     meta.tempoBeatDotted,
@@ -1602,23 +1648,21 @@ export function InteractiveStave() {
     dispatch,
   ])
 
-  // --- versuri: salvare / închidere / avans la nota următoare ---
+  // --- versuri (modul M): salvare + navigare între note ---
+  // intrarea selectată acum (input-ul de versuri apare doar dacă e o notă)
+  const lyricEntry = staves
+    .find((s) => s.notes.some((n) => n.id === selectedId))
+    ?.notes.find((n) => n.id === selectedId)
+  const lyricActive = lyricMode && !!lyricEntry && lyricEntry.type === "note"
+
   function commitLyric() {
-    if (lyricEdit) dispatch({ type: "setLyric", id: lyricEdit.noteId, text: lyricText })
+    // setLyric ignoră pauzele și no-op-urile, deci e ieftin de chemat oricând
+    if (selectedId) dispatch({ type: "setLyric", id: selectedId, text: lyricText })
   }
-  function closeLyric() {
-    commitLyric()
-    setLyricEdit(null)
-  }
-  function advanceLyric(direction: "next" | "prev") {
-    if (!lyricEdit) return
-    commitLyric()
-    const staff = staves.find((s) => s.id === lyricEdit.staffId)
-    if (!staff) {
-      setLyricEdit(null)
-      return
-    }
-    const idx = staff.notes.findIndex((n) => n.id === lyricEdit.noteId)
+  function moveToAdjacentNote(direction: "next" | "prev") {
+    const staff = staves.find((s) => s.notes.some((n) => n.id === selectedId)) ?? staves.find((s) => s.id === activeStaffId)
+    if (!staff) return
+    const idx = staff.notes.findIndex((n) => n.id === selectedId)
     // sărim pauzele — versurile se pun doar pe note
     let j = -1
     if (direction === "next") {
@@ -1626,13 +1670,11 @@ export function InteractiveStave() {
     } else {
       for (let i = idx - 1; i >= 0; i--) if (staff.notes[i].type === "note") { j = i; break }
     }
-    if (j < 0) {
-      setLyricEdit(null)
-      return
-    }
-    const target = staff.notes[j]
-    setLyricText(target.lyric ?? "")
-    setLyricEdit({ noteId: target.id, staffId: staff.id })
+    if (j >= 0) dispatch({ type: "selectNote", id: staff.notes[j].id })
+  }
+  function advanceLyric(direction: "next" | "prev") {
+    commitLyric()
+    moveToAdjacentNote(direction)
   }
 
   return (
@@ -1641,37 +1683,50 @@ export function InteractiveStave() {
       <div ref={wrapperRef} className="relative w-full">
         {/* overflow-x: în vizualizarea continuă SVG-ul e mai lat decât containerul */}
         <div ref={containerRef} className="w-full overflow-x-auto" />
-        {lyricEdit && lyricPos && (
+        {lyricActive && lyricPos && (
           <input
             ref={lyricInputRef}
             autoFocus
             value={lyricText}
             onChange={(e) => setLyricText(e.target.value)}
-            onBlur={closeLyric}
+            onBlur={commitLyric}
             onKeyDown={(e) => {
               // Space/Tab -> salvează și treci la nota următoare (Shift+Tab înapoi);
-              // Enter -> salvează și închide; Esc -> închide fără salvare
+              // Enter/Esc -> salvează silaba sub notă și ies din modul Versuri
+              // (rămâi pe nota curentă). ←/→ rămân navigare în text (cursorul din
+              // silabă), ca în MuseScore.
               if (e.key === " ") {
                 e.preventDefault()
                 advanceLyric("next")
               } else if (e.key === "Tab") {
                 e.preventDefault()
                 advanceLyric(e.shiftKey ? "prev" : "next")
-              } else if (e.key === "Enter") {
+              } else if (e.key === "Enter" || e.key === "Escape") {
                 e.preventDefault()
-                closeLyric()
-              } else if (e.key === "Escape") {
-                e.preventDefault()
-                setLyricEdit(null)
+                commitLyric()
+                setLyricMode(false)
               }
             }}
-            className="absolute z-10 w-24 -translate-x-1/2 rounded-sm border border-primary bg-surface px-1 py-0.5 text-center text-xs text-foreground outline-none"
-            style={{ left: lyricPos.left, top: lyricPos.top }}
+            className="absolute z-10 w-24 -translate-x-1/2 rounded-sm border border-primary bg-surface px-1 py-0.5 text-center text-xs outline-none"
+            // nota editată e cea selectată -> text auriu, ca pe foaie (vezi randarea SVG)
+            style={{ left: lyricPos.left, top: lyricPos.top, color: ACCENT_COLOR, caretColor: ACCENT_COLOR }}
             placeholder="versuri…"
           />
         )}
       </div>
-      {noteInputMode ? (
+      {lyricMode ? (
+        <p className="px-1 text-xs">
+          <span className="rounded-sm bg-primary/20 px-1.5 py-0.5 font-medium text-primary">
+            ● Versuri
+          </span>{" "}
+          <span className="text-foreground-muted">
+            Scrie silaba sub nota selectată ·{" "}
+            <span className="text-foreground">Space / Tab</span> nota următoare ·{" "}
+            <span className="text-foreground">Shift+Tab</span> nota anterioară · Click pe o notă o alege ·{" "}
+            <span className="text-foreground">Enter / Esc / M</span> termină (păstrează silaba)
+          </span>
+        </p>
+      ) : noteInputMode ? (
         <p className="px-1 text-xs">
           <span className="rounded-sm bg-primary/20 px-1.5 py-0.5 font-medium text-primary">
             ● Introducere note
@@ -1699,7 +1754,8 @@ export function InteractiveStave() {
           <span className="text-foreground">.</span> punct ·{" "}
           <span className="text-foreground">P</span> notă ↔ pauză ·{" "}
           <span className="text-foreground">L</span> legato ·{" "}
-          <span className="text-foreground">Dublu-click pe o notă</span> versuri ·{" "}
+          <span className="text-foreground">Ctrl+3</span> triolet ·{" "}
+          <span className="text-foreground">M</span> versuri ·{" "}
           <span className="text-foreground">Delete</span> șterge ·{" "}
           <span className="text-foreground">Space</span> redă (selecția / portativul bifat / tot) ·{" "}
           <span className="text-foreground">Esc</span> deselectează (adaugi liber la final) ·{" "}

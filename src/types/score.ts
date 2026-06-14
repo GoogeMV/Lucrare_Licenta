@@ -57,6 +57,13 @@ export interface NoteEntry {
   /** Silaba de versuri scrisă sub notă (o singură strofă); absentă dacă nu există.
    *  Pauzele nu poartă versuri — silabele se pun doar pe note. */
   lyric?: string
+  /** Numărul de note al grupului de tuplet (3 = triolet) din care face parte
+   *  intrarea; absent = durată normală. Durata efectivă = durata notată ×
+   *  normal/tuplet (ex. optime de triolet = 0.5 × 2/3). */
+  tuplet?: number
+  /** Id-ul grupului de tuplet (delimitează trioletele alăturate); absent dacă
+   *  nu e într-un tuplet. Toate cele `tuplet` note ale unui grup îl împart. */
+  tupletId?: string
 }
 
 /**

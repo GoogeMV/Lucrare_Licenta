@@ -57,6 +57,9 @@ body {
   --color-background: var(--background);
   --color-surface: var(--surface);
   --color-surface-hover: var(--surface-hover);
+  --color-bar: var(--bar);
+  --color-panel: var(--panel);
+  --color-sheet: var(--sheet);
   --color-foreground-muted: var(--foreground-muted);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -80,9 +83,12 @@ body {
 .dark {
   --radius: 0.5rem;
 
-  --background: #2c1f14;        /* zona principală de editare a partiturii */
-  --surface: #3d2b1a;           /* header, palete, toolbar, transport bar */
-  --surface-hover: #4a3522;
+  --background: #321a18;        /* zona din spatele cardului (în jurul foii) */
+  --sheet: #241f24;             /* cardul/foaia pe care stau portativele — gri-mov rece */
+  --bar: #3c1321;               /* bara de sus (header) și de jos (transport) — burgundy */
+  --panel: #221110;             /* paletele laterale: instrumente (stânga) + note (dreapta) */
+  --surface: #3a221f;           /* suprafețe „ridicate": dropdown-uri, carduri, popover-uri */
+  --surface-hover: #451a22;     /* culoarea butoanelor/controalelor (chip-uri, dropdown-uri) */
   --foreground: #e8dcc8;        /* text crem, lizibil pe fundal închis */
   --foreground-muted: #c9b8a0;
 
@@ -100,9 +106,9 @@ body {
   --accent: var(--surface-hover);
   --accent-foreground: var(--foreground);
 
-  --destructive: #c0584a;
-  --border: #5a432c;
-  --input: #5a432c;
+  --destructive: #cf6b54;
+  --border: #5a2433;            /* hairline în ton de vin, ca panourile să se delimiteze */
+  --input: #5a2433;
   --ring: #c9a96e;
 
   --chart-1: #c9a96e;

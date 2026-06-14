@@ -60,6 +60,8 @@ const INSTRUMENT_SAMPLE_FAMILY: Record<string, string> = {
   "Chitară electrică": "guitar-electric",
   "Chitară clasică": "guitar-nylon",
   "Chitară bas": "bass-electric",
+  // corul nu are eșantioane pe CDN — îl redăm sintetic („aaa", vezi createChoirSynth)
+  "Voce (cor)": "choir",
 }
 
 /** Interfața comună folosită de player (Sampler și PolySynth o au amândouă) */
@@ -83,7 +85,29 @@ function createFallbackSynth(): InstrumentSound {
   return synth
 }
 
+/**
+ * Cor sintetic (timbru vocal „aaa") — biblioteca de eșantioane nu are voci, deci
+ * îl construim din sinteză, ca „Voice Aahs" din MuseScore: o undă sawtooth
+ * (bogată în armonice, ca vocea umană) înmuiată cu un filtru lowpass, vibrato
+ * ușor (senzație de cântăreț) și o urmă de reverb (ansamblu/sală). Cântă
+ * înălțimea fiecărei note — versurile rămân doar text, nu sunt rostite.
+ */
+function createChoirSynth(): InstrumentSound {
+  const synth = new Tone.PolySynth(Tone.Synth)
+  synth.set({
+    oscillator: { type: "sawtooth" },
+    envelope: { attack: 0.35, decay: 0.2, sustain: 0.85, release: 0.6 },
+  })
+  const filter = new Tone.Filter({ type: "lowpass", frequency: 1900, Q: 0.4 })
+  const vibrato = new Tone.Vibrato({ frequency: 5, depth: 0.06 })
+  const reverb = new Tone.Reverb({ decay: 2.2, wet: 0.25 })
+  synth.chain(filter, vibrato, reverb, Tone.getDestination())
+  synth.volume.value = -9
+  return synth
+}
+
 function loadSampler(family: string): Promise<InstrumentSound> {
+  if (family === "choir") return Promise.resolve(createChoirSynth())
   const urls = SAMPLE_SETS[family]
   if (!urls) return Promise.resolve(createFallbackSynth())
 

@@ -1,5 +1,5 @@
 import type { Accidental, Articulation, Clef, Duration, Staff, TimeSignature } from "@/types/score"
-import { DURATION_BEATS, entryBeats } from "@/lib/notation/duration"
+import { DURATION_BEATS, entryBeats, tupletNormal } from "@/lib/notation/duration"
 import { DYNAMIC_MUSICXML_TAGS } from "@/lib/notation/dynamics"
 import { keyAccidentalMap, keyFifths } from "@/lib/notation/keySignature"
 import { measureQuarters } from "@/lib/notation/timeSignature"
@@ -18,8 +18,9 @@ import { splitIntoMeasures, type MeasureFragment } from "@/lib/notation/measure"
  *  - măsurile sunt împărțite identic cu randarea (lib/notation/measure).
  */
 
-// unități de durată per pătrime: 4 => șaisprezecimea = 1 (cea mai mică durată a noastră)
-const DIVISIONS = 4
+// unități de durată per pătrime: 12 => divizibil cu 4 (șaisprezecime = 3) ȘI cu 3
+// (optime de triolet = 4), deci toate duratele noastre, inclusiv trioletele, ies întregi
+const DIVISIONS = 12
 
 const TYPE_NAMES: Record<Duration, string> = {
   whole: "whole",
@@ -160,7 +161,7 @@ function partToXml(
         // măsură goală — pauză de măsură întreagă, ca partida să rămână validă
         lines.push(`      <note><rest measure="yes"/><duration>${measureDivisions}</duration></note>`)
       } else {
-        for (const frag of fragments) {
+        fragments.forEach((frag, k) => {
           const entry = staff.notes[frag.noteIndex]
           // nuanța se exportă ca <direction> o singură dată, înaintea primului
           // fragment al notei (nu pe continuările legate peste bară)
@@ -173,8 +174,12 @@ function partToXml(
               "      </direction>",
             )
           }
-          lines.push(noteToXml(entry, frag, keyMap, slurStarts, slurStops))
-        }
+          // începutul/sfârșitul grupului de tuplet (trioletele nu trec peste bară,
+          // deci marginile se află comparând cu fragmentele vecine din măsură)
+          const tupletStart = !!frag.tupletId && fragments[k - 1]?.tupletId !== frag.tupletId
+          const tupletStop = !!frag.tupletId && fragments[k + 1]?.tupletId !== frag.tupletId
+          lines.push(noteToXml(entry, frag, keyMap, slurStarts, slurStops, tupletStart, tupletStop))
+        })
       }
 
       lines.push("    </measure>")
@@ -191,18 +196,39 @@ function noteToXml(
   keyMap: ReturnType<typeof keyAccidentalMap>,
   slurStarts: Map<string, number>,
   slurStops: Map<string, number>,
+  tupletStart = false,
+  tupletStop = false,
 ): string {
   // durata/valoarea vin din FRAGMENT (o notă spartă peste bară are fragmente cu
   // valori diferite, legate prin tie); alterațiile/legato/articulațiile sunt
   // proprietăți ale notei și apar doar pe primul fragment
-  const duration = Math.round(entryBeats({ duration: frag.duration, dotted: frag.dotted }) * DIVISIONS)
+  const duration = Math.round(
+    entryBeats({ duration: frag.duration, dotted: frag.dotted, tuplet: frag.tuplet }) * DIVISIONS,
+  )
   const type = TYPE_NAMES[frag.duration]
   const isFirst = !frag.tieStop
+  // raportul de tuplet (3:2 pentru triolet) — folosit la <time-modification>
+  const timeMod = frag.tuplet
+    ? [
+        "        <time-modification>",
+        `          <actual-notes>${frag.tuplet}</actual-notes>`,
+        `          <normal-notes>${tupletNormal(frag.tuplet)}</normal-notes>`,
+        "        </time-modification>",
+      ]
+    : []
+  // notațiile de tuplet (bracket + „3") la marginile grupului
+  const tupletNotations: string[] = []
+  if (tupletStart) tupletNotations.push('          <tuplet type="start" bracket="yes" number="1"/>')
+  if (tupletStop) tupletNotations.push('          <tuplet type="stop" number="1"/>')
 
   if (entry.type === "rest") {
     const lines = ["      <note>", "        <rest/>"]
     lines.push(`        <duration>${duration}</duration>`, `        <type>${type}</type>`)
     if (frag.dotted) lines.push("        <dot/>")
+    lines.push(...timeMod)
+    if (tupletNotations.length > 0) {
+      lines.push("        <notations>", ...tupletNotations, "        </notations>")
+    }
     lines.push("      </note>")
     return lines.join("\n")
   }
@@ -238,6 +264,9 @@ function noteToXml(
         lines.push(`        <accidental>${ACCIDENTAL_NAMES[pitch.accidental]}</accidental>`)
       }
 
+      // raportul de tuplet — pe fiecare notă (inclusiv membrii acordului)
+      lines.push(...timeMod)
+
       if (pitchIdx === 0) {
         const articulations = isFirst ? entry.articulations ?? [] : []
         const slurStart = isFirst ? slurStarts.get(entry.id) : undefined
@@ -247,7 +276,8 @@ function noteToXml(
           slurStart !== undefined ||
           slurStop !== undefined ||
           frag.tieStart ||
-          frag.tieStop
+          frag.tieStop ||
+          tupletNotations.length > 0
         if (hasNotations) {
           lines.push("        <notations>")
           // ligatura VIZUALĂ (tied) — perechea grafică a <tie>
@@ -263,6 +293,7 @@ function noteToXml(
               "          </articulations>",
             )
           }
+          lines.push(...tupletNotations)
           lines.push("        </notations>")
         }
 
