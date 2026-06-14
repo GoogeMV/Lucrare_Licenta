@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { BookOpen, Check, ChevronDown, MoveHorizontal, Redo2, Undo2 } from "lucide-react"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { saveScore, loadScore, hasSavedScore } from "@/lib/storage/scoreStorage"
 import { scoreToMusicXML } from "@/lib/export/musicxml"
+import { parseMusicXML } from "@/lib/import/musicxml"
 
 const MENU_ITEM_CLASS =
   "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
@@ -17,6 +18,7 @@ function FileMenu() {
   const [open, setOpen] = useState(false)
   const [justSaved, setJustSaved] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // închidem meniul la click oriunde în afara lui
   useEffect(() => {
@@ -61,6 +63,25 @@ function FileMenu() {
     setMeta({ title: "", composer: "", tempo: 120, tempoBeat: "quarter", tempoBeatDotted: false, tempoText: "" })
   }
 
+  function handleImportClick() {
+    setOpen(false)
+    fileInputRef.current?.click()
+  }
+
+  async function handleImportFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = "" // permite reimportul aceluiași fișier
+    if (!file) return
+    try {
+      const imported = parseMusicXML(await file.text())
+      if (!window.confirm("Înlocuiești partitura curentă cu fișierul importat?")) return
+      dispatch({ type: "loadScore", staves: imported.staves, timeSignature: imported.timeSignature })
+      setMeta(imported.meta)
+    } catch (error) {
+      window.alert(`Importul a eșuat: ${error instanceof Error ? error.message : "fișier nevalid"}`)
+    }
+  }
+
   return (
     <div ref={wrapperRef} className="relative">
       <Button variant="ghost" size="sm" onClick={() => setOpen((o) => !o)}>
@@ -87,11 +108,21 @@ function FileMenu() {
           >
             Încarcă partitura salvată
           </button>
+          <button type="button" className={MENU_ITEM_CLASS} onClick={handleImportClick}>
+            Importă MusicXML <span className="ml-auto text-xs opacity-50">.musicxml</span>
+          </button>
           <button type="button" className={MENU_ITEM_CLASS} onClick={handleNew}>
             Partitură nouă
           </button>
         </div>
       )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".musicxml,.xml,application/vnd.recordare.musicxml+xml,application/xml,text/xml"
+        className="hidden"
+        onChange={handleImportFile}
+      />
     </div>
   )
 }

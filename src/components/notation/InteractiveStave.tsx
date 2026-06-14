@@ -107,6 +107,7 @@ const STEP_PX = 6 // pixeli per treaptă diatonică (pentru spațierea dinamică
 const LEDGER_SLACK = 30 // câte linii suplimentare „încap" în spațiul de bază înainte să mărim
 const TOP_MARGIN = 36
 const BOTTOM_MARGIN = 30
+const LYRIC_OFFSET = 20 // distanța (px) sub linia de jos a portativului pentru versuri
 
 /** Găsește cel mai apropiat strămoș care derulează (overflow-y auto/scroll) */
 function findScrollParent(el: HTMLElement | null): HTMLElement | null {
@@ -202,6 +203,9 @@ export function InteractiveStave() {
     selectionRef.current = { staves, selectedIds, selectedId, selectedStaffIds, activeStaffId, meta, playbackRate }
   }, [staves, selectedIds, selectedId, selectedStaffIds, activeStaffId, meta, playbackRate])
 
+  // linia de jos a fiecărui portativ (în coordonate SVG), pe „staffId:systemIndex"
+  // — folosită ca să așezăm input-ul de versuri exact unde se desenează silaba
+  const rowBottomRef = useRef<Map<string, number>>(new Map())
   // elementele SVG ale notelor randate, pe id — folosite de evidențierea din
   // timpul redării ca să recoloreze direct nota curentă, fără re-randare React
   const svgNoteElsRef = useRef<Map<string, SVGElement>>(new Map())
@@ -544,6 +548,16 @@ export function InteractiveStave() {
               return staveNote
             })
 
+            // creăm tuplet-urile ÎNAINTE de formatare: `setTuplet` reduce tick-urile
+            // notelor (un triolet ocupă spațiul a 2 optimi, nu 3); altfel formatter-ul
+            // vede 3 optimi întregi și lățește măsura. Le desenăm abia după voce.
+            const tuplets: Tuplet[] = []
+            measureTuplets.forEach(({ count, notes }) => {
+              if (notes.length >= 2) {
+                tuplets.push(new Tuplet(notes, { numNotes: count, notesOccupied: tupletNormal(count) }))
+              }
+            })
+
             // optimile/șaisprezecimile consecutive se grupează cu bară (beam),
             // ca în notația tipărită; în măsurile cu numitor 8 (6/8, 3/8) se
             // grupează câte trei optimi, altfel pe timpi de pătrime (implicit)
@@ -559,16 +573,12 @@ export function InteractiveStave() {
             voice.draw(context, stave)
             beams.forEach((beam) => beam.setContext(context).draw())
 
-            // bracket-urile de tuplet (triolet) + numărul „3", după formatare
-            if (measureTuplets.size > 0) {
+            // bracket-urile de tuplet (triolet) + numărul „3", după voce (notele
+            // au deja poziții); tick-urile au fost reduse la creare, mai sus
+            if (tuplets.length > 0) {
               context.setFillStyle(INK_COLOR)
               context.setStrokeStyle(INK_COLOR)
-              measureTuplets.forEach(({ count, notes }) => {
-                if (notes.length < 2) return
-                new Tuplet(notes, { numNotes: count, notesOccupied: tupletNormal(count) })
-                  .setContext(context)
-                  .draw()
-              })
+              tuplets.forEach((t) => t.setContext(context).draw())
             }
           }
           } // showNotation
@@ -632,6 +642,9 @@ export function InteractiveStave() {
             const lastY = systemTop + staffOffsets[members[members.length - 1]]
             const groupActive = members.some((j) => staves[j].id === activeStaffId)
             const groupInPlayback = members.some((j) => selectedStaffIds.includes(staves[j].id))
+            // resetăm fontul: desenarea trioletului („3") lasă contextul cu alt
+            // font, iar eticheta ar moșteni dimensiunea aceea (devenea gigantică)
+            context.setFont("Georgia, serif", 10)
             context.setFillStyle(groupActive || groupInPlayback ? ACCENT_COLOR : INK_COLOR)
             context.fillText(instrumentLabel(staff.instrument), LEFT_MARGIN, (firstY + lastY) / 2 + 26)
             context.setFillStyle(INK_COLOR)
@@ -714,6 +727,7 @@ export function InteractiveStave() {
     if (svgEl) {
       const rowBottom = new Map<string, number>()
       rows.forEach((r) => rowBottom.set(`${r.staffId}:${r.systemIndex}`, r.bottomY))
+      rowBottomRef.current = rowBottom // pentru poziționarea input-ului de versuri
       renderedNotes.forEach(({ id, staffId, staveNote, systemIndex, firstOfNote }) => {
         if (!firstOfNote) return
         const entry = staves.find((s) => s.id === staffId)?.notes.find((n) => n.id === id)
@@ -746,7 +760,7 @@ export function InteractiveStave() {
         if (bottomY === undefined) return
         const text = document.createElementNS(SVG_NS, "text")
         text.setAttribute("x", String(staveNote.getAbsoluteX() + 5))
-        text.setAttribute("y", String(bottomY + 48))
+        text.setAttribute("y", String(bottomY + LYRIC_OFFSET))
         text.setAttribute("text-anchor", "middle")
         text.setAttribute("font-family", "Georgia, serif")
         text.setAttribute("font-size", "12")
@@ -1192,16 +1206,23 @@ export function InteractiveStave() {
   // nu direct în corpul efectului (regula react-hooks/set-state-in-effect).
   useLayoutEffect(() => {
     if (!lyricMode || !selectedId) return
-    const entry = staves.find((s) => s.notes.some((n) => n.id === selectedId))?.notes.find((n) => n.id === selectedId)
-    if (!entry || entry.type !== "note") return
+    const staff = staves.find((s) => s.notes.some((n) => n.id === selectedId))
+    const entry = staff?.notes.find((n) => n.id === selectedId)
+    if (!staff || !entry || entry.type !== "note") return
     const reposition = () => {
-      const noteEl = svgNoteElsRef.current.get(selectedId)
+      const svg = containerRef.current?.querySelector("svg")
       const wrap = wrapperRef.current
-      if (!noteEl || !wrap) return
-      const r = noteEl.getBoundingClientRect()
+      const meta = noteMetaRef.current.get(selectedId)
+      const ctm = svg?.getScreenCTM()
+      if (!svg || !wrap || !meta || !ctm) return
+      // aceeași linie de bază ca silaba desenată (coordonate SVG), ca input-ul să
+      // apară EXACT unde va fi textul; convertim în coordonatele wrapper-ului
+      const bottomY = rowBottomRef.current.get(`${staff.id}:${meta.systemIndex}`)
+      if (bottomY === undefined) return
+      const pt = new DOMPoint(meta.x + 5, bottomY + LYRIC_OFFSET).matrixTransform(ctm)
       const w = wrap.getBoundingClientRect()
-      // centrăm pe notă (input-ul are translateX(-50%)) și coborâm sub portativ
-      setLyricPos({ left: r.left - w.left + r.width / 2, top: r.bottom - w.top + 10 })
+      // input-ul are translateX(-50%); ridicăm puțin (top) ca textul să cadă pe linie
+      setLyricPos({ left: pt.x - w.left, top: pt.y - w.top - 11 })
     }
     const sync = () => {
       setLyricText(entry.lyric ?? "")

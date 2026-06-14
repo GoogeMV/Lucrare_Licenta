@@ -35,7 +35,7 @@ export function nextStaffId() {
 }
 
 let groupCounter = 0
-function nextGroupId() {
+export function nextGroupId() {
   groupCounter += 1
   return `group-${groupCounter}`
 }
@@ -632,9 +632,10 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
 
     case "makeTriplet": {
       // transformă intrarea selectată într-un triolet: o înlocuiește cu 3 intrări
-      // de durata imediat mai mică (ex. pătrime → 3 optimi de triolet), care
-      // ocupă același timp. Prima păstrează nota/acordul; celelalte două sunt
-      // pauze. Refuzat dacă e deja triolet sau prea mic (șaisprezecime).
+      // egale (aceeași înălțime/tip) de durata imediat mai mică (ex. pătrime → 3
+      // optimi de triolet), care ocupă același timp — deci se aude ca un triolet
+      // din prima. Doar prima păstrează articulațiile/nuanța/versul. Refuzat dacă
+      // e deja triolet sau prea mic (șaisprezecime).
       if (!state.selectedId) return state
       const staff = staffOfNote(state, state.selectedId)
       if (!staff) return state
@@ -644,28 +645,21 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
       const sub = smallerDuration(entry.duration)
       if (!sub) return state
       const tupletId = nextTupletId()
-      const first: NoteEntry = {
+      const member = (withExtras: boolean): NoteEntry => ({
         id: nextId(),
         type: entry.type,
         pitches: entry.pitches.map((p) => ({ ...p })),
         duration: sub,
         tuplet: 3,
         tupletId,
-        articulations: entry.articulations,
-        dynamic: entry.dynamic,
-        lyric: entry.lyric,
-      }
-      const rest = (): NoteEntry => ({
-        id: nextId(),
-        type: "rest",
-        pitches: [DEFAULT_PITCH],
-        duration: sub,
-        tuplet: 3,
-        tupletId,
+        articulations: withExtras ? entry.articulations : undefined,
+        dynamic: withExtras ? entry.dynamic : undefined,
+        lyric: withExtras ? entry.lyric : undefined,
       })
+      const triplet = [member(true), member(false), member(false)]
       const notes = [...staff.notes]
-      notes.splice(idx, 1, first, rest(), rest())
-      return { ...updateStaff(state, staff.id, (s) => ({ ...s, notes })), ...selectSingle(first.id) }
+      notes.splice(idx, 1, ...triplet)
+      return { ...updateStaff(state, staff.id, (s) => ({ ...s, notes })), ...selectSingle(triplet[0].id) }
     }
 
     case "toggleRest": {
