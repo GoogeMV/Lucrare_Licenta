@@ -4,7 +4,6 @@ import { Slider } from "@/components/ui/slider"
 import { Play, Square, RotateCcw, Loader2 } from "lucide-react"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { playbackQuarterBpm } from "@/lib/notation/duration"
-import { ScorePlayer } from "@/lib/audio/playback"
 import { Metronome } from "@/lib/audio/metronome"
 import { emitPlaybackHighlight } from "@/lib/audio/playbackHighlight"
 
@@ -15,9 +14,19 @@ import { emitPlaybackHighlight } from "@/lib/audio/playbackHighlight"
  * ca să nu re-randăm partitura la fiecare notă — vezi lib/audio/playbackHighlight).
  */
 export function TransportBar() {
-  const { staves, activeStaffId, selectedStaffIds, timeSignature, meta, playbackRate, setPlaybackRate, dispatch } =
-    useScoreEditor()
-  const [isPlaying, setIsPlaying] = useState(false)
+  const {
+    staves,
+    activeStaffId,
+    selectedStaffIds,
+    timeSignature,
+    meta,
+    playbackRate,
+    setPlaybackRate,
+    player,
+    isPlaying,
+    setIsPlaying,
+    dispatch,
+  } = useScoreEditor()
   // adevărat cât timp se descarcă eșantioanele instrumentelor (doar primul Play)
   const [isPreparing, setIsPreparing] = useState(false)
   const [metronomeOn, setMetronomeOn] = useState(false)
@@ -26,18 +35,14 @@ export function TransportBar() {
   // un reglaj separat „pe parcurs", care nu schimbă indicația de pe foaie.
   const playbackBpm = playbackQuarterBpm(meta.tempo, meta.tempoBeat, meta.tempoBeatDotted, playbackRate)
 
-  // un singur player și un singur metronom pe toată durata componentei
-  const playerRef = useRef<ScorePlayer | null>(null)
-  if (playerRef.current == null) playerRef.current = new ScorePlayer()
+  // player-ul e partajat (în context, folosit și de Space); metronomul e local
   const metronomeRef = useRef<Metronome | null>(null)
   if (metronomeRef.current == null) metronomeRef.current = new Metronome()
 
-  // oprește redarea la demontarea componentei (evită sunet rămas în urmă)
+  // oprește metronomul la demontarea componentei (player-ul e curățat de context)
   useEffect(() => {
-    const player = playerRef.current
     const metronome = metronomeRef.current
     return () => {
-      player?.stop()
       metronome?.stop()
       emitPlaybackHighlight(null)
     }
@@ -58,9 +63,6 @@ export function TransportBar() {
   }, [metronomeOn, isPlaying, playbackBpm, timeSignature])
 
   function togglePlay() {
-    const player = playerRef.current
-    if (!player) return
-
     if (isPlaying) {
       player.stop()
       emitPlaybackHighlight(null)
@@ -96,7 +98,7 @@ export function TransportBar() {
   }
 
   function reset() {
-    playerRef.current?.stop()
+    player.stop()
     emitPlaybackHighlight(null)
     setIsPlaying(false)
     // readucem selecția la prima notă a portativului activ, ca punct de pornire

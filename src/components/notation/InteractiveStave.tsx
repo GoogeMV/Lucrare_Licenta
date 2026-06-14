@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import {
   Renderer,
   Stave,
@@ -18,16 +18,15 @@ import {
   GhostNote,
 } from "vexflow"
 import { useScoreEditor } from "@/state/scoreEditorContext"
-import { DEFAULT_PITCH } from "@/state/scoreReducer"
-import { buildStaffPositions, pitchToVexflowKey, TOP_LINE_PITCH } from "@/lib/notation/pitch"
-import { DURATION_HOTKEYS, REST_HOTKEYS, entryBeats, vexflowDurationCode } from "@/lib/notation/duration"
+import { buildStaffPositions, pitchIndex, pitchToVexflowKey, TOP_LINE_PITCH } from "@/lib/notation/pitch"
+import { DURATION_HOTKEYS, REST_HOTKEYS, entryBeats, playbackQuarterBpm, vexflowDurationCode } from "@/lib/notation/duration"
 import { splitIntoMeasures, type MeasureFragment } from "@/lib/notation/measure"
 import { ACCIDENTAL_HOTKEYS, ACCIDENTAL_TO_VEXFLOW } from "@/lib/notation/accidental"
 import { ARTICULATION_TO_VEXFLOW } from "@/lib/notation/articulation"
 import { keyAccidentalCount } from "@/lib/notation/keySignature"
 import { instrumentLabel } from "@/lib/notation/instrument"
 import { openStringPitch, stringCountForInstrument, supportsTab, tabPosition } from "@/lib/notation/tab"
-import { onPlaybackHighlight } from "@/lib/audio/playbackHighlight"
+import { onPlaybackHighlight, emitPlaybackHighlight } from "@/lib/audio/playbackHighlight"
 import { auditionPitches } from "@/lib/audio/audition"
 import { measureQuarters, timeSignatureLabel } from "@/lib/notation/timeSignature"
 import type { Clef, NoteEntry, Pitch, Step } from "@/types/score"
@@ -100,9 +99,11 @@ const HEADER_WIDTH = 70 // cheie + armură + măsură pe prima măsură a unui s
 const KEY_ACCIDENTAL_WIDTH = 9 // spațiu rezervat pentru fiecare alterație din armură
 const LEFT_MARGIN = 20
 const LABEL_WIDTH = 64 // gutter în stânga pentru numele instrumentelor
-const STAFF_ROW_HEIGHT = 84 // înălțimea verticală a unui portativ într-un sistem
-const GRAND_STAFF_GAP = 72 // spațiu mai mic între portativele aceluiași instrument (pian)
-const SYSTEM_GAP = 36 // spațiu între sisteme (rânduri)
+const STAFF_ROW_HEIGHT = 88 // înălțimea de bază (compactă) a unui portativ; crește dinamic
+const GRAND_STAFF_GAP = 80 // spațiu între portativele aceluiași instrument (pian / notație+TAB)
+const SYSTEM_GAP = 40 // spațiu între sisteme (rânduri)
+const STEP_PX = 6 // pixeli per treaptă diatonică (pentru spațierea dinamică)
+const LEDGER_SLACK = 30 // câte linii suplimentare „încap" în spațiul de bază înainte să mărim
 const TOP_MARGIN = 36
 const BOTTOM_MARGIN = 30
 
@@ -150,6 +151,9 @@ const DIGIT_DURATIONS: Record<string, "whole" | "half" | "quarter" | "eighth" | 
  */
 export function InteractiveStave() {
   const containerRef = useRef<HTMLDivElement>(null)
+  // wrapper poziționat (relative) peste care plutește input-ul de versuri —
+  // stă în AFARA containerului SVG (care se golește la fiecare redesenare)
+  const wrapperRef = useRef<HTMLDivElement>(null)
   const {
     staves,
     activeStaffId,
@@ -160,26 +164,41 @@ export function InteractiveStave() {
     selectedPitchIndex,
     selectedDuration,
     viewMode,
+    meta,
+    playbackRate,
+    player,
+    setIsPlaying,
     dispatch,
   } = useScoreEditor()
   // modul de introducere a notelor din tastatură (comutat cu N, ca în MuseScore)
   const [noteInputMode, setNoteInputMode] = useState(false)
+
+  // editarea de versuri (dublu-click pe o notă): nota în curs de editare, textul
+  // din câmp și poziția (în coordonatele wrapper-ului) a input-ului plutitor
+  const [lyricEdit, setLyricEdit] = useState<{ noteId: string; staffId: string } | null>(null)
+  const [lyricText, setLyricText] = useState("")
+  const [lyricPos, setLyricPos] = useState<{ left: number; top: number } | null>(null)
+  const lyricInputRef = useRef<HTMLInputElement>(null)
 
   // clipboard pentru copy/paste — date efemere (nu intră în partitură, nici în
   // istoricul undo), deci trăiesc într-un ref, nu în reducer
   const clipboardRef = useRef<NoteEntry[]>([])
   // buffer pentru tastarea fret-urilor în TAB (două cifre tastate rapid → ex. 12)
   const fretBufferRef = useRef<{ ts: number; digits: string }>({ ts: 0, digits: "" })
-  // oglindă a selecției curente pentru handler-ul de tastatură (Ctrl+C citește
-  // selecția fără să re-abonăm listener-ul la fiecare schimbare de selecție)
-  const selectionRef = useRef<{ staves: typeof staves; selectedIds: string[]; selectedId: string | null }>({
-    staves,
-    selectedIds,
-    selectedId,
-  })
+  // oglindă a selecției curente pentru handler-ul de tastatură (Ctrl+C / Space
+  // citesc selecția fără să re-abonăm listener-ul la fiecare schimbare)
+  const selectionRef = useRef<{
+    staves: typeof staves
+    selectedIds: string[]
+    selectedId: string | null
+    selectedStaffIds: string[]
+    activeStaffId: string
+    meta: typeof meta
+    playbackRate: number
+  }>({ staves, selectedIds, selectedId, selectedStaffIds, activeStaffId, meta, playbackRate })
   useEffect(() => {
-    selectionRef.current = { staves, selectedIds, selectedId }
-  }, [staves, selectedIds, selectedId])
+    selectionRef.current = { staves, selectedIds, selectedId, selectedStaffIds, activeStaffId, meta, playbackRate }
+  }, [staves, selectedIds, selectedId, selectedStaffIds, activeStaffId, meta, playbackRate])
 
   // elementele SVG ale notelor randate, pe id — folosite de evidențierea din
   // timpul redării ca să recoloreze direct nota curentă, fără re-randare React
@@ -260,13 +279,42 @@ export function InteractiveStave() {
     const staffDisplays = staves.map((s) =>
       supportsTab(s.instrument) ? (s.display ?? "notation") : "notation",
     )
-    // înălțimea pe care o ocupă fiecare portativ (mai mică în interiorul unui grup;
-    // un rând în plus pentru chitara în modul „ambele" = notație + TAB)
+    // spațiere DINAMICĂ: cât depășesc notele portativul (în px, peste o rezervă),
+    // ca portativele să se depărteze doar când notele urcă/coboară mult (și să
+    // revină când le cobori). Doar notația are linii suplimentare; TAB-ul nu.
+    const extentUp: number[] = []
+    const extentDown: number[] = []
+    staves.forEach((staff, i) => {
+      let up = 0
+      let down = 0
+      if (staffDisplays[i] !== "tab" && staff.notes.length > 0) {
+        const topIdx = pitchIndex(TOP_LINE_PITCH[staff.clef]) // linia de sus
+        const bottomIdx = topIdx - 8 // linia de jos = 8 trepte mai jos
+        for (const n of staff.notes) {
+          if (n.type !== "note") continue
+          for (const p of n.pitches) {
+            const idx = pitchIndex(p)
+            if (idx - topIdx > up) up = idx - topIdx
+            if (bottomIdx - idx > down) down = bottomIdx - idx
+          }
+        }
+      }
+      extentUp[i] = Math.max(0, up * STEP_PX - LEDGER_SLACK)
+      extentDown[i] = Math.max(0, down * STEP_PX - LEDGER_SLACK)
+    })
+    // în „ambele", TAB-ul coboară și cu spațiul cerut de notele joase ale notației
+    const tabOffsets = staves.map((_, i) => STAFF_ROW_HEIGHT + extentDown[i])
+
+    // înălțimea ocupată de fiecare portativ: bază (mai mică în interiorul unui grup)
+    // + spațiul pentru notele joase ale lui + cele înalte ale portativului următor;
+    // „ambele" adaugă rândul de TAB
     const staffSpan: number[] = staves.map((staff, i) => {
       const next = staves[i + 1]
       const tight = !!next && !!staff.groupId && next.groupId === staff.groupId
       const base = tight ? GRAND_STAFF_GAP : STAFF_ROW_HEIGHT
-      return staffDisplays[i] === "both" ? base + STAFF_ROW_HEIGHT : base
+      const upNext = next ? extentUp[i + 1] : 0
+      if (staffDisplays[i] === "both") return tabOffsets[i] + STAFF_ROW_HEIGHT + upNext
+      return base + extentDown[i] + upNext
     })
     // offset-ul vertical al fiecărui portativ în cadrul unui sistem
     const staffOffsets: number[] = []
@@ -276,7 +324,9 @@ export function InteractiveStave() {
     }, 0)
     const innerHeight = staffSpan.reduce((a, b) => a + b, 0)
     const systemHeight = innerHeight + SYSTEM_GAP
-    const height = TOP_MARGIN + systemCount * systemHeight + BOTTOM_MARGIN
+    // rezervă deasupra primului portativ pentru notele lui înalte
+    const topPad = TOP_MARGIN + (extentUp[0] ?? 0)
+    const height = topPad + systemCount * systemHeight + BOTTOM_MARGIN
 
     const renderer = new Renderer(container, Renderer.Backends.SVG)
     renderer.resize(width, height)
@@ -333,10 +383,11 @@ export function InteractiveStave() {
       const measuresInRow = Math.min(measuresPerSystem, measureCount - measureStart)
       // "justificăm" rândul: lățimea măsurilor umple toată lățimea disponibilă
       const stretchedMeasureWidth = (availableWidth - headerWidth) / measuresInRow
-      const systemTop = TOP_MARGIN + systemIndex * systemHeight
+      const systemTop = topPad + systemIndex * systemHeight
       systemBounds.push({ top: systemTop, bottom: systemTop + innerHeight })
       // prima măsură (col 0) a fiecărui portativ din sistem — pentru acolade
       const systemFirstStaves: (Stave | null)[] = []
+      const systemFirstTabStaves: (TabStave | null)[] = []
 
       staves.forEach((staff, staffIndex) => {
         const staffY = systemTop + staffOffsets[staffIndex]
@@ -350,8 +401,9 @@ export function InteractiveStave() {
         const display = staffDisplays[staffIndex]
         const showNotation = display !== "tab"
         const showTab = display === "tab" || display === "both"
-        // în „ambele", TAB-ul stă sub notație; altfel ocupă rândul portativului
-        const tabYOffset = showNotation ? STAFF_ROW_HEIGHT : 0
+        // în „ambele", TAB-ul stă sub notație (coborât și cu spațiul notelor joase);
+        // în „TAB", ocupă rândul portativului
+        const tabYOffset = showNotation ? tabOffsets[staffIndex] : 0
         const stringCount = stringCountForInstrument(staff.instrument)
 
         for (let col = 0; col < measuresInRow; col++) {
@@ -404,8 +456,10 @@ export function InteractiveStave() {
               // primul fragment al notei poartă alterațiile/articulațiile/nuanța;
               // fragmentele de continuare (legate peste bară) nu le repetă
               const isContinuation = !!frag.tieStop
-              // o intrare poate avea mai multe înălțimi (acord) — toate pe același StaveNote
-              const pitches = isRest ? [DEFAULT_PITCH] : entry.pitches
+              // o intrare poate avea mai multe înălțimi (acord) — toate pe același StaveNote.
+              // pauza se așază pe linia din MIJLOC a cheii (index 4 = linia 2) —
+              // altfel (cu Si4 fix) apare prea sus în cheia fa / do
+              const pitches = isRest ? [STAFF_POSITIONS[staff.clef][4]] : entry.pitches
               const staveNote = new StaveNote({
                 clef: staff.clef,
                 keys: pitches.map(pitchToVexflowKey),
@@ -546,6 +600,7 @@ export function InteractiveStave() {
         if (labelStave) {
           // acoladele de grup (pian) se leagă de portativul de notație
           if (firstStaveOfRow) systemFirstStaves[staffIndex] = firstStaveOfRow
+          if (firstTabStaveOfRow) systemFirstTabStaves[staffIndex] = firstTabStaveOfRow
 
           // numele instrumentului se scrie o singură dată pe grup, centrat
           // vertical între portativele lui (pentru pian — între cheie sol și fa)
@@ -600,6 +655,16 @@ export function InteractiveStave() {
         new StaveConnector(top, bottom).setType("brace").setContext(context).draw()
         new StaveConnector(top, bottom).setType("singleLeft").setContext(context).draw()
       })
+
+      // acoladă pentru chitara în modul „ambele": leagă notația de TAB
+      staves.forEach((_, staffIndex) => {
+        if (staffDisplays[staffIndex] !== "both") return
+        const top = systemFirstStaves[staffIndex]
+        const bottom = systemFirstTabStaves[staffIndex]
+        if (!top || !bottom) return
+        new StaveConnector(top, bottom).setType("brace").setContext(context).draw()
+        new StaveConnector(top, bottom).setType("singleLeft").setContext(context).draw()
+      })
     }
 
     // ligaturile (tie) dintre fragmentele notelor sparte peste bară
@@ -643,6 +708,27 @@ export function InteractiveStave() {
         text.setAttribute("fill", selectedIdSet.has(id) ? ACCENT_COLOR : INK_COLOR)
         text.setAttribute("pointer-events", "none")
         text.textContent = entry.dynamic
+        svgEl.appendChild(text)
+      })
+
+      // versurile: silaba centrată sub nota ei (sub nuanțe). Nota aflată acum în
+      // editare nu se desenează — în locul ei plutește input-ul HTML.
+      renderedNotes.forEach(({ id, staffId, staveNote, systemIndex, firstOfNote, isRest }) => {
+        if (!firstOfNote || isRest) return
+        if (lyricEdit?.noteId === id) return
+        const entry = staves.find((s) => s.id === staffId)?.notes.find((n) => n.id === id)
+        if (!entry?.lyric) return
+        const bottomY = rowBottom.get(`${staffId}:${systemIndex}`)
+        if (bottomY === undefined) return
+        const text = document.createElementNS(SVG_NS, "text")
+        text.setAttribute("x", String(staveNote.getAbsoluteX() + 5))
+        text.setAttribute("y", String(bottomY + 48))
+        text.setAttribute("text-anchor", "middle")
+        text.setAttribute("font-family", "Georgia, serif")
+        text.setAttribute("font-size", "12")
+        text.setAttribute("fill", selectedIdSet.has(id) ? ACCENT_COLOR : INK_COLOR)
+        text.setAttribute("pointer-events", "none")
+        text.textContent = entry.lyric
         svgEl.appendChild(text)
       })
     }
@@ -963,7 +1049,11 @@ export function InteractiveStave() {
               Math.hypot(a.x - clickX, a.y - clickY) - Math.hypot(b.x - clickX, b.y - clickY),
           )[0]
         if (headHit) {
-          dispatch({ type: "selectNote", id: headHit.id, pitchIndex: headHit.pitchIndex })
+          // Alt = comută individual (ne-contiguu), Shift = extinde intervalul,
+          // simplu = selectează exact acea înălțime
+          if (event.altKey) dispatch({ type: "toggleNoteInSelection", id: headHit.id })
+          else if (event.shiftKey) dispatch({ type: "extendSelectionTo", id: headHit.id })
+          else dispatch({ type: "selectNote", id: headHit.id, pitchIndex: headHit.pitchIndex })
           return
         }
 
@@ -1051,6 +1141,21 @@ export function InteractiveStave() {
         )
         dispatch({ type: "addNoteAtPitch", staffId: row.staffId, pitch, beforeId: insertBefore?.id })
       })
+
+      // dublu-click pe o notă -> deschide editarea de versuri sub ea (pe pauze nu)
+      svgEl.addEventListener("dblclick", (event) => {
+        const { x: cx, y: cy } = clientToSvg(event.clientX, event.clientY)
+        const hit = noteHits
+          .filter((h) => Math.abs(h.x - cx) <= h.halfW + 4 && Math.abs(h.y - cy) <= h.halfH + 4)
+          .sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy))[0]
+        if (!hit) return
+        const staff = staves.find((s) => s.id === hit.staffId)
+        const entry = staff?.notes.find((n) => n.id === hit.id)
+        if (!staff || !entry || entry.type !== "note") return
+        event.preventDefault()
+        setLyricText(entry.lyric ?? "")
+        setLyricEdit({ noteId: hit.id, staffId: staff.id })
+      })
     }
 
     // restaurăm pozițiile de scroll salvate înainte de redesenare (vezi mai sus)
@@ -1060,7 +1165,7 @@ export function InteractiveStave() {
     if (container.scrollLeft !== savedScrollLeft) {
       container.scrollLeft = savedScrollLeft
     }
-  }, [staves, activeStaffId, selectedStaffIds, timeSignature, selectedId, selectedIds, selectedPitchIndex, viewMode, dispatch])
+  }, [staves, activeStaffId, selectedStaffIds, timeSignature, selectedId, selectedIds, selectedPitchIndex, viewMode, lyricEdit, dispatch])
 
   useEffect(() => {
     draw()
@@ -1070,6 +1175,34 @@ export function InteractiveStave() {
     observer.observe(container)
     return () => observer.disconnect()
   }, [draw])
+
+  // poziționarea input-ului de versuri sub nota editată. Calculăm din chenarul
+  // real al elementului SVG al notei (ține cont de scroll/scalare), relativ la
+  // wrapper. Repoziționăm la scroll/resize cât timp e deschis.
+  useLayoutEffect(() => {
+    // input-ul se randează doar când lyricEdit ȘI lyricPos sunt setate, deci o
+    // poziție rămasă de la editarea anterioară e inofensivă (nu se mai afișează)
+    if (!lyricEdit) return
+    const reposition = () => {
+      const noteEl = svgNoteElsRef.current.get(lyricEdit.noteId)
+      const wrap = wrapperRef.current
+      if (!noteEl || !wrap) return
+      const r = noteEl.getBoundingClientRect()
+      const w = wrap.getBoundingClientRect()
+      // centrăm pe notă (input-ul are translateX(-50%)) și coborâm sub portativ
+      setLyricPos({ left: r.left - w.left + r.width / 2, top: r.bottom - w.top + 10 })
+    }
+    reposition()
+    const scroller = containerRef.current
+    scroller?.addEventListener("scroll", reposition)
+    window.addEventListener("scroll", reposition, true)
+    window.addEventListener("resize", reposition)
+    return () => {
+      scroller?.removeEventListener("scroll", reposition)
+      window.removeEventListener("scroll", reposition, true)
+      window.removeEventListener("resize", reposition)
+    }
+  }, [lyricEdit])
 
   // evidențierea notei curente în timpul redării: recolorăm direct elementele
   // SVG ale notei și mișcăm cursorul vertical — fără dispatch / re-randare React
@@ -1177,10 +1310,13 @@ export function InteractiveStave() {
   // Cheia de deduplicare evită re-redarea la modificări neauzibile (durată etc.);
   // în timpul redării selecția e goală, deci audiția tace de la sine.
   const auditionKeyRef = useRef("")
+  const auditionTimerRef = useRef<number | null>(null)
   useEffect(() => {
     const staff = staves.find((s) => s.notes.some((n) => n.id === selectedId))
     const entry = staff?.notes.find((n) => n.id === selectedId)
     if (!staff || !entry || entry.type !== "note") {
+      // nimic de audiat (deselectat / pauză) — anulăm audiția programată
+      if (auditionTimerRef.current !== null) window.clearTimeout(auditionTimerRef.current)
       auditionKeyRef.current = selectedId ?? ""
       return
     }
@@ -1193,7 +1329,15 @@ export function InteractiveStave() {
       .join(",")}`
     if (key === auditionKeyRef.current) return
     auditionKeyRef.current = key
-    void auditionPitches(staff.instrument, staff.keySignature, pitches)
+    // amânare scurtă (debounce): la navigare/scroll rapid prin note, cele
+    // intermediare NU se aud — sună doar nota pe care te oprești (preview scurt fix)
+    if (auditionTimerRef.current !== null) window.clearTimeout(auditionTimerRef.current)
+    auditionTimerRef.current = window.setTimeout(() => {
+      void auditionPitches(staff.instrument, staff.keySignature, pitches)
+    }, 70)
+    return () => {
+      if (auditionTimerRef.current !== null) window.clearTimeout(auditionTimerRef.current)
+    }
   }, [selectedId, selectedPitchIndex, staves])
 
   // navigare/editare din tastatură (vezi indicațiile de sub portativ)
@@ -1251,6 +1395,59 @@ export function InteractiveStave() {
         event.preventDefault()
         setNoteInputMode(false)
         dispatch({ type: "selectNote", id: null })
+        dispatch({ type: "clearStaffSelection" })
+        return
+      }
+
+      // Space — redă contextual; a doua apăsare oprește:
+      //  • note selectate -> doar ele
+      //  • portativ(e) bifat(e) pentru redare parțială -> doar acelea
+      //  • nimic -> toată piesa
+      if (event.key === " " && !hasModifier) {
+        event.preventDefault()
+        if (player.isPlaying) {
+          player.stop()
+          emitPlaybackHighlight(null)
+          setIsPlaying(false)
+          return
+        }
+        // citim selecția DIRECT (nu din ref) ca să fie mereu la zi
+        const bpm = playbackQuarterBpm(meta.tempo, meta.tempoBeat, meta.tempoBeatDotted, playbackRate)
+        const noteIds = selectedIds.length ? selectedIds : selectedId ? [selectedId] : []
+        let parts: { notes: NoteEntry[]; keySignature: string; instrument: string }[]
+        let highlightPartIndex: number
+        if (noteIds.length > 0) {
+          // doar notele selectate (păstrăm selecția aurie) — grupate pe portativ,
+          // ca segmentele de pe instrumente diferite să sune împreună (de la timpul 0)
+          const idSet = new Set(noteIds)
+          const playedStaves = staves.filter((s) => s.notes.some((n) => idSet.has(n.id)))
+          if (playedStaves.length === 0) return
+          parts = playedStaves.map((s) => ({
+            notes: s.notes.filter((n) => idSet.has(n.id)),
+            keySignature: s.keySignature,
+            instrument: s.instrument,
+          }))
+          const headIdx = playedStaves.findIndex((s) => s.notes.some((n) => n.id === selectedId))
+          highlightPartIndex = headIdx >= 0 ? headIdx : 0
+        } else {
+          // portativele bifate (Ctrl+click) sau, fără bifare, toate
+          const played = selectedStaffIds.length
+            ? staves.filter((s) => selectedStaffIds.includes(s.id))
+            : staves
+          if (played.length === 0) return
+          parts = played.map((s) => ({ notes: s.notes, keySignature: s.keySignature, instrument: s.instrument }))
+          const activeAmong = played.findIndex((s) => s.id === activeStaffId)
+          highlightPartIndex = activeAmong >= 0 ? activeAmong : 0
+        }
+        setIsPlaying(true)
+        void player.play(parts, bpm, {
+          highlightPartIndex,
+          onNote: (id, durationSeconds) => emitPlaybackHighlight(id, durationSeconds),
+          onEnd: () => {
+            emitPlaybackHighlight(null)
+            setIsPlaying(false)
+          },
+        })
         return
       }
 
@@ -1388,12 +1585,92 @@ export function InteractiveStave() {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [selectedId, selectedDuration, noteInputMode, dispatch])
+  }, [
+    selectedId,
+    selectedIds,
+    selectedStaffIds,
+    staves,
+    activeStaffId,
+    selectedDuration,
+    noteInputMode,
+    meta.tempo,
+    meta.tempoBeat,
+    meta.tempoBeatDotted,
+    playbackRate,
+    player,
+    setIsPlaying,
+    dispatch,
+  ])
+
+  // --- versuri: salvare / închidere / avans la nota următoare ---
+  function commitLyric() {
+    if (lyricEdit) dispatch({ type: "setLyric", id: lyricEdit.noteId, text: lyricText })
+  }
+  function closeLyric() {
+    commitLyric()
+    setLyricEdit(null)
+  }
+  function advanceLyric(direction: "next" | "prev") {
+    if (!lyricEdit) return
+    commitLyric()
+    const staff = staves.find((s) => s.id === lyricEdit.staffId)
+    if (!staff) {
+      setLyricEdit(null)
+      return
+    }
+    const idx = staff.notes.findIndex((n) => n.id === lyricEdit.noteId)
+    // sărim pauzele — versurile se pun doar pe note
+    let j = -1
+    if (direction === "next") {
+      for (let i = idx + 1; i < staff.notes.length; i++) if (staff.notes[i].type === "note") { j = i; break }
+    } else {
+      for (let i = idx - 1; i >= 0; i--) if (staff.notes[i].type === "note") { j = i; break }
+    }
+    if (j < 0) {
+      setLyricEdit(null)
+      return
+    }
+    const target = staff.notes[j]
+    setLyricText(target.lyric ?? "")
+    setLyricEdit({ noteId: target.id, staffId: staff.id })
+  }
 
   return (
     <div className="flex flex-col gap-2">
-      {/* overflow-x: în vizualizarea continuă SVG-ul e mai lat decât containerul */}
-      <div ref={containerRef} className="w-full overflow-x-auto" />
+      {/* wrapper relativ: input-ul de versuri plutește peste containerul SVG */}
+      <div ref={wrapperRef} className="relative w-full">
+        {/* overflow-x: în vizualizarea continuă SVG-ul e mai lat decât containerul */}
+        <div ref={containerRef} className="w-full overflow-x-auto" />
+        {lyricEdit && lyricPos && (
+          <input
+            ref={lyricInputRef}
+            autoFocus
+            value={lyricText}
+            onChange={(e) => setLyricText(e.target.value)}
+            onBlur={closeLyric}
+            onKeyDown={(e) => {
+              // Space/Tab -> salvează și treci la nota următoare (Shift+Tab înapoi);
+              // Enter -> salvează și închide; Esc -> închide fără salvare
+              if (e.key === " ") {
+                e.preventDefault()
+                advanceLyric("next")
+              } else if (e.key === "Tab") {
+                e.preventDefault()
+                advanceLyric(e.shiftKey ? "prev" : "next")
+              } else if (e.key === "Enter") {
+                e.preventDefault()
+                closeLyric()
+              } else if (e.key === "Escape") {
+                e.preventDefault()
+                setLyricEdit(null)
+              }
+            }}
+            className="absolute z-10 w-24 -translate-x-1/2 rounded-sm border border-primary bg-surface px-1 py-0.5 text-center text-xs text-foreground outline-none"
+            style={{ left: lyricPos.left, top: lyricPos.top }}
+            placeholder="versuri…"
+          />
+        )}
+      </div>
       {noteInputMode ? (
         <p className="px-1 text-xs">
           <span className="rounded-sm bg-primary/20 px-1.5 py-0.5 font-medium text-primary">
@@ -1422,7 +1699,9 @@ export function InteractiveStave() {
           <span className="text-foreground">.</span> punct ·{" "}
           <span className="text-foreground">P</span> notă ↔ pauză ·{" "}
           <span className="text-foreground">L</span> legato ·{" "}
+          <span className="text-foreground">Dublu-click pe o notă</span> versuri ·{" "}
           <span className="text-foreground">Delete</span> șterge ·{" "}
+          <span className="text-foreground">Space</span> redă (selecția / portativul bifat / tot) ·{" "}
           <span className="text-foreground">Esc</span> deselectează (adaugi liber la final) ·{" "}
           <span className="text-foreground">Shift+click</span> / <span className="text-foreground">Shift+←→</span>{" "}
           / <span className="text-foreground">Shift+drag</span> selectează un interval ·{" "}

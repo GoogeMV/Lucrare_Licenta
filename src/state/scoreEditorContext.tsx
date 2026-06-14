@@ -1,10 +1,20 @@
-import { createContext, useContext, useReducer, useState, type Dispatch, type ReactNode } from "react"
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useReducer,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react"
 import {
   historyReducer,
   initialHistoryState,
   type HistoryAction,
   type ScoreState,
 } from "@/state/scoreReducer"
+import { ScorePlayer } from "@/lib/audio/playback"
 import type { Duration } from "@/types/score"
 
 /**
@@ -43,6 +53,12 @@ interface ScoreEditorValue extends ScoreState {
    *  salvează și nu intră în undo (reglaj de practică „pe parcurs") */
   playbackRate: number
   setPlaybackRate: (percent: number) => void
+  /** Player-ul audio partajat (folosit și de bara de transport, și de Space) —
+   *  unul singur, ca redările să nu se suprapună */
+  player: ScorePlayer
+  /** Adevărat cât timp se redă (reactiv — pentru iconița butonului Play) */
+  isPlaying: boolean
+  setIsPlaying: Dispatch<SetStateAction<boolean>>
 }
 
 const ScoreEditorContext = createContext<ScoreEditorValue | null>(null)
@@ -56,6 +72,10 @@ export function ScoreEditorProvider({ children }: { children: ReactNode }) {
   const [history, dispatch] = useReducer(historyReducer, initialHistoryState)
   const [viewMode, setViewMode] = useState<ViewMode>("page")
   const [playbackRate, setPlaybackRate] = useState(100)
+  const [isPlaying, setIsPlaying] = useState(false)
+  // un singur player pe toată aplicația — partajat între Play și Space
+  const [player] = useState(() => new ScorePlayer())
+  useEffect(() => () => player.stop(), [player])
   const [meta, setMetaState] = useState<ScoreMeta>({
     title: "",
     composer: "",
@@ -78,6 +98,9 @@ export function ScoreEditorProvider({ children }: { children: ReactNode }) {
         setViewMode,
         playbackRate,
         setPlaybackRate,
+        player,
+        isPlaying,
+        setIsPlaying,
       }}
     >
       {children}

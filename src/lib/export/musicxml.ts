@@ -265,6 +265,17 @@ function noteToXml(
           }
           lines.push("        </notations>")
         }
+
+        // versuri (o singură strofă): silaba se atașează notei (prima a acordului),
+        // doar pe primul fragment. Păstrăm silabele independente (syllabic=single).
+        if (isFirst && entry.lyric) {
+          lines.push(
+            '        <lyric number="1">',
+            "          <syllabic>single</syllabic>",
+            `          <text>${escapeXml(entry.lyric)}</text>`,
+            "        </lyric>",
+          )
+        }
       }
 
       lines.push("      </note>")

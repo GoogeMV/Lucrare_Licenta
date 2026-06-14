@@ -54,6 +54,9 @@ export interface NoteEntry {
   articulations?: Articulation[]
   /** Nuanța plasată pe această notă (rămâne în vigoare până la următoarea); absentă dacă nu există */
   dynamic?: Dynamic
+  /** Silaba de versuri scrisă sub notă (o singură strofă); absentă dacă nu există.
+   *  Pauzele nu poartă versuri — silabele se pun doar pe note. */
+  lyric?: string
 }
 
 /**
