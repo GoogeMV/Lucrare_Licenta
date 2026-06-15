@@ -4,6 +4,7 @@ import { InstrumentPalette } from "@/components/layout/InstrumentPalette"
 import { ScoreEditor } from "@/components/layout/ScoreEditor"
 import { NoteToolbar } from "@/components/layout/NoteToolbar"
 import { TransportBar } from "@/components/layout/TransportBar"
+import { HelpOverlay } from "@/components/layout/HelpOverlay"
 import { ScoreEditorProvider } from "@/state/scoreEditorContext"
 
 function App() {
@@ -18,6 +19,7 @@ function App() {
             <NoteToolbar />
           </div>
           <TransportBar />
+          <HelpOverlay />
         </div>
       </ScoreEditorProvider>
     </TooltipProvider>

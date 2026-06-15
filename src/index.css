@@ -79,10 +79,92 @@ body {
   maro închis / crem, gândită pentru o aplicație de notație muzicală.
   Este tratată ca temă "dark" pentru shadcn (clasa .dark pe <html>).
 */
-:root,
-.dark {
-  --radius: 0.5rem;
+/* Tema deschisă (Light) — stil iOS: fundal gri-deschis de sistem, carduri/foaie
+   albe, separatoare subtile, accent albastru iOS. Curată și bună pentru print.
+   `:root` e implicit; `.dark` și `.signature` o suprascriu. */
+:root {
+  --radius: 0.625rem;          /* colțuri puțin mai rotunde, ca pe iOS */
 
+  --background: #f2f2f7;       /* iOS systemGroupedBackground — gri foarte deschis */
+  --sheet: #ffffff;            /* foaia — alb curat (print) */
+  --bar: #ffffff;              /* bare sus/jos — albe, separate prin border subtil */
+  --panel: #f7f7fa;            /* palete laterale — gri foarte deschis */
+  --surface: #ffffff;          /* dropdown-uri/carduri — albe */
+  --surface-hover: #ededf2;    /* fill gri iOS (hover/controale) */
+  --foreground: #1c1c1e;       /* iOS label — aproape negru */
+  --foreground-muted: #8e8e93; /* iOS secondaryLabel / systemGray */
+
+  --card: var(--surface);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface);
+  --popover-foreground: var(--foreground);
+
+  --primary: #c8a02e;          /* accent auriu — selecție / stări active */
+  --primary-foreground: #2a241d;
+  --secondary: var(--surface-hover);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--surface-hover);
+  --muted-foreground: var(--foreground-muted);
+  --accent: var(--surface-hover);
+  --accent-foreground: var(--foreground);
+
+  --destructive: #ff3b30;      /* iOS systemRed */
+  --border: #e3e3e8;           /* separator subtil iOS */
+  --input: #e3e3e8;
+  --ring: #c8a02e;
+
+  --chart-1: #c8a02e;
+  --chart-2: #34c759;
+  --chart-3: #ff9500;
+  --chart-4: #af52de;
+  --chart-5: #5856d6;
+
+  --sidebar: var(--panel);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--surface-hover);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--primary);
+
+  --ink: #1c1c1e;              /* notația de pe foaie — negru pe alb (print) */
+  --ink-accent: #b8860b;       /* selecția notelor — auriu, vizibil pe alb */
+}
+
+/* Tema întunecată CLASICĂ (implicită la pornire, `<html class="dark">`) —
+   tonuri de negru/gri, accent alb-argintiu. Curată, neutră. */
+.dark {
+  --background: #0d0d0f;        /* fundal în jurul foii — aproape negru */
+  --sheet: #1b1b1e;             /* cardul/foaia — gri închis (mai deschis ca fundalul) */
+  --bar: #161618;              /* bare sus/jos — gri foarte închis */
+  --panel: #161618;            /* palete laterale */
+  --surface: #202023;          /* dropdown-uri/carduri */
+  --surface-hover: #2c2c30;    /* controale / hover */
+  --foreground: #ece3cf;       /* text crem (în loc de alb pur) */
+  --foreground-muted: #a8a294;
+
+  --primary: #ddb24a;          /* accent auriu — stări active */
+  --primary-foreground: #20190a;
+
+  --destructive: #ff453a;      /* roșu (dark) */
+  --border: #2e2e33;
+  --input: #2e2e33;
+  --ring: #ddb24a;
+
+  --chart-1: #ddb24a;
+  --chart-2: #a1a1aa;
+  --chart-3: #71717a;
+  --chart-4: #d4d4d8;
+  --chart-5: #52525b;
+
+  --ink: #e8dfca;              /* notația de pe foaie — crem pe închis */
+  --ink-accent: #f0c64e;       /* selecția notelor — auriu aprins (distinct de crem) */
+}
+
+/* Tema „Signature Dark" — varianta decorativă întunecată: burgundy + crem + auriu.
+   Are și clasa .dark (pentru variantele shadcn `dark:`), peste care suprascrie. */
+.signature-dark {
   --background: #321a18;        /* zona din spatele cardului (în jurul foii) */
   --sheet: #241f24;             /* cardul/foaia pe care stau portativele — gri-mov rece */
   --bar: #3c1321;               /* bara de sus (header) și de jos (transport) — burgundy */
@@ -92,19 +174,8 @@ body {
   --foreground: #e8dcc8;        /* text crem, lizibil pe fundal închis */
   --foreground-muted: #c9b8a0;
 
-  --card: var(--surface);
-  --card-foreground: var(--foreground);
-  --popover: var(--surface);
-  --popover-foreground: var(--foreground);
-
   --primary: #c9a96e;           /* auriu — accent / elemente active */
   --primary-foreground: #2c1f14;
-  --secondary: var(--surface-hover);
-  --secondary-foreground: var(--foreground);
-  --muted: var(--surface-hover);
-  --muted-foreground: var(--foreground-muted);
-  --accent: var(--surface-hover);
-  --accent-foreground: var(--foreground);
 
   --destructive: #cf6b54;
   --border: #5a2433;            /* hairline în ton de vin, ca panourile să se delimiteze */
@@ -117,14 +188,126 @@ body {
   --chart-4: #9b6e8a;
   --chart-5: #b08a4e;
 
-  --sidebar: var(--surface);
-  --sidebar-foreground: var(--foreground);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--surface-hover);
-  --sidebar-accent-foreground: var(--foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--primary);
+  --ink: #e8dcc8;              /* notația de pe foaie — crem pe închis */
+  --ink-accent: #f3c544;       /* auriu de selecție aprins */
+}
+
+/* Tema „Signature" — varianta decorativă: ramă verde (phthalo + forest), foaie
+   pergament cu textură, fundal lemn de birou. Suprascrie doar primitivele față
+   de `:root`; derivatele (card/secondary/sidebar…) le moștenesc prin var(). */
+html.signature-light {
+  --background: #211008;       /* baza lemnului (textura se adaugă în .desk-wood) */
+  --sheet: #ece3cb;            /* foaia — pergament crem îmbătrânit */
+  --bar: #123524;              /* bare sus/jos — phthalo green */
+  --panel: #2e4a32;            /* palete laterale — forest green */
+  --surface: #f6efe1;
+  --surface-hover: #e4d9c2;
+  --foreground: #2a241d;
+  --foreground-muted: #6b5f4f;
+  --primary: #bf9b30;
+  --primary-foreground: #2a241d;
+  --destructive: #b3402f;
+  --border: #cabfa8;
+  --input: #cabfa8;
+  --ring: #bf9b30;
+  --chart-1: #bf9b30;
+  --chart-2: #6e8a4e;
+  --chart-3: #4e6e8a;
+  --chart-4: #8a4e6e;
+  --chart-5: #a06a2e;
+  --ink: #241c12;              /* notația — sepia închis */
+  --ink-accent: #b9770e;       /* selecția — auriu/chihlimbar */
+}
+
+/*
+  Foaia: în light mode, alb cu o textură fină de hârtie (granulație SVG la opacitate
+  mică, peste alb); în dark mode rămâne doar culoarea (fără textură).
+*/
+.score-sheet {
+  background-color: var(--sheet);
+}
+/* light: hârtie îmbătrânită — vignetă caldă pe margini (sus) + film grain (jos) */
+html.signature-light .score-sheet {
+  background-image:
+    radial-gradient(110% 125% at 50% 40%, transparent 38%, rgba(70, 48, 20, 0.38) 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.32 0 0 0 0 0.23 0 0 0 0 0.10 0 0 0 0.24 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23p)'/%3E%3C/svg%3E");
+}
+
+/*
+  Rama (bare + panouri) e verde-închis în light mode, deci controalele dinăuntru
+  au nevoie de text/contur DESCHIS. Suprascriem variabilele pe subarborele ramei
+  (doar în light; în dark rama folosește tema globală închisă). Folosim alb
+  translucid pentru fundaluri/contururi, ca să meargă pe ambele verzi.
+*/
+html.signature-light .frame {
+  /* `color` explicit: așa TOT ce-i înăuntru (inclusiv butoanele fără clasă de
+     culoare) moștenește culoarea crem, nu doar elementele cu `text-foreground` */
+  color: var(--foreground);
+  --foreground: #efe6d0;       /* crem */
+  --foreground-muted: #cdbfa6;
+  --surface-hover: rgba(0, 0, 0, 0.16);  /* chip-uri ușor mai închise decât verdele */
+  --muted: rgba(0, 0, 0, 0.16);
+  --secondary: rgba(0, 0, 0, 0.16);
+  --border: rgba(255, 255, 255, 0.20);
+  --input: rgba(255, 255, 255, 0.20);
+  --background: rgba(0, 0, 0, 0.12);
+  --primary: #e8c766;          /* accent auriu, vizibil pe verde (stări active) */
+  --primary-foreground: #1c2a1f;
+}
+
+/*
+  Butoanele din BARE (sus/jos) — chip-uri crem pline cu text închis, ca să se vadă
+  clar pe verde. Excludem butoanele active (`.bg-primary`, ex. Metronom On) și
+  resetăm butoanele din dropdown-urile resetate (`.menu-light`) la stilul lor.
+*/
+html.signature-light .bar-cream button:not(.bg-primary) {
+  background-color: #efe6d0;
+  color: #2a241d;
+  border-color: rgba(60, 40, 20, 0.18);
+}
+html.signature-light .bar-cream button:not(.bg-primary):hover {
+  background-color: #e3d7bd;
+}
+html.signature-light .bar-cream .menu-light button:not(.bg-primary) {
+  background-color: transparent;
+  color: var(--foreground);
+  border-color: transparent;
+}
+html.signature-light .bar-cream .menu-light button:not(.bg-primary):hover {
+  background-color: var(--surface-hover);
+}
+
+/*
+  Dropdown-urile care ies din ramă (Fișier/Export/Mixer) plutesc peste conținutul
+  deschis, deci revin la paleta zonelor deschise (text închis pe alb-crem).
+*/
+html.signature-light .menu-light {
+  color: var(--foreground);
+  --foreground: #2a241d;
+  --foreground-muted: #6b5f4f;
+  --surface: #f6efe1;
+  --surface-hover: #e4d9c2;
+  --muted: #e4d9c2;
+  --secondary: #e4d9c2;
+  --border: #cabfa8;
+  --input: #cabfa8;
+  --background: #cabda2;
+  --primary: #bf9b30;
+  --primary-foreground: #2a241d;
+}
+
+/*
+  Fundalul din jurul foii, în light mode: efect de lemn de birou (stejar deschis,
+  ca textul închis să rămână lizibil) — fibră orizontală (turbulence) + îmbinări
+  fine de scânduri. În dark rămâne culoarea simplă (`bg-background`).
+*/
+html.signature-light .desk-wood {
+  background-color: #211008;  /* maro foarte închis */
+  /* două straturi: linii fine verticale (deasupra) + benzi tonale late (dedesubt),
+     ambele „întinse" pe verticală (frecvență mare pe X, mică pe Y) — fără scânduri */
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.4 0.006' numOctaves='4' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.10 0 0 0 0 0.07 0 0 0 0 0.04 0 0 0 0.22 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018 0.006' numOctaves='2' seed='6' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.30 0 0 0 0 0.22 0 0 0 0 0.13 0 0 0 0.10 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23b)'/%3E%3C/svg%3E");
 }
 
 @layer base {
@@ -146,4 +329,42 @@ body {
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
+}
+
+/*
+ * Export PDF (prin dialogul de print al browserului → „Salvează ca PDF", A4).
+ * Activat când <body> are clasa `printing` (vezi handleExportPdf): se forțează
+ * tema deschisă, apoi se ascunde tot în afară de foaie. Foaia (SVG cu viewBox)
+ * se scalează la lățimea paginii. Scorurile foarte lungi pot necesita reglarea
+ * scalei din dialogul de print (un SVG nu se rupe între pagini).
+ */
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+  body.printing {
+    background: #fff;
+  }
+  body.printing * {
+    visibility: hidden;
+  }
+  body.printing .score-sheet,
+  body.printing .score-sheet * {
+    visibility: visible;
+  }
+  body.printing .score-sheet {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    border: none;
+    box-shadow: none;
+    background: #fff;
+  }
+  body.printing .score-sheet svg {
+    width: 100%;
+    height: auto;
+  }
 }

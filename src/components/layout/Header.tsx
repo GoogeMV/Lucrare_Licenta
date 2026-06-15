@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react"
 import { Button } from "@/components/ui/button"
-import { BookOpen, Check, ChevronDown, MoveHorizontal, Redo2, Undo2 } from "lucide-react"
+import { BookOpen, Check, ChevronDown, HelpCircle, MoveHorizontal, Palette, Redo2, Undo2 } from "lucide-react"
+import { TOGGLE_HELP_EVENT } from "@/components/layout/HelpOverlay"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { saveScore, loadScore, hasSavedScore } from "@/lib/storage/scoreStorage"
 import { scoreToMusicXML } from "@/lib/export/musicxml"
@@ -134,7 +135,7 @@ function FileMenu() {
         )}
       </Button>
       {open && (
-        <div className="absolute top-full left-0 z-50 mt-1 w-56 rounded-md border border-border bg-surface p-1 shadow-lg">
+        <div className="menu-light absolute top-full left-0 z-50 mt-1 w-56 rounded-md border border-border bg-surface p-1 shadow-lg">
           <button type="button" className={MENU_ITEM_CLASS} onClick={handleSave}>
             Salvează partitura <span className="ml-auto text-xs opacity-50">local</span>
           </button>
@@ -172,7 +173,8 @@ function FileMenu() {
  * parțială (Ctrl+click), altfel toate; intervalul de măsuri întreg.
  */
 function ExportMenu() {
-  const { staves, timeSignature, meta, selectedStaffIds, mixer } = useScoreEditor()
+  const { staves, timeSignature, meta, selectedStaffIds, mixer, theme, setTheme, viewMode, setViewMode } =
+    useScoreEditor()
   const [open, setOpen] = useState(false)
   const [isRendering, setIsRendering] = useState(false)
   const [included, setIncluded] = useState<Set<string>>(new Set())
@@ -244,6 +246,27 @@ function ExportMenu() {
     download(new Blob([xml], { type: "application/vnd.recordare.musicxml+xml" }), "musicxml")
   }
 
+  // PDF prin dialogul de print al browserului (Salvează ca PDF, A4): forțăm tema
+  // deschisă (negru pe alb), izolăm foaia prin CSS de print, apoi revenim la temă.
+  function handleExportPdf() {
+    setOpen(false)
+    const restoreTheme = theme
+    const restoreView = viewMode
+    // tema deschisă (negru pe alb) + vizualizare pe PAGINĂ (fără derulare orizontală)
+    if (theme !== "light") setTheme("light")
+    if (viewMode !== "page") setViewMode("page")
+    document.body.classList.add("printing")
+    const onAfterPrint = () => {
+      document.body.classList.remove("printing")
+      if (restoreTheme !== "light") setTheme(restoreTheme)
+      if (restoreView !== "page") setViewMode(restoreView)
+      window.removeEventListener("afterprint", onAfterPrint)
+    }
+    window.addEventListener("afterprint", onAfterPrint)
+    // lăsăm foaia să se redeseneze (temă + pagină) înainte de dialogul de print
+    window.setTimeout(() => window.print(), 150)
+  }
+
   async function handleExportWav() {
     const chosen = exportStaves()
     if (!chosen || isRendering) return
@@ -273,7 +296,7 @@ function ExportMenu() {
         {isRendering ? "Se randează…" : <>Export <ChevronDown className="size-3 opacity-60" /></>}
       </Button>
       {open && (
-        <div className="absolute top-full left-0 z-50 mt-1 w-64 rounded-md border border-border bg-surface p-2 shadow-lg">
+        <div className="menu-light absolute top-full left-0 z-50 mt-1 w-64 rounded-md border border-border bg-surface p-2 shadow-lg">
           <p className="px-1 pb-1 text-[11px] font-medium text-foreground-muted">Instrumente</p>
           <div className="max-h-48 overflow-y-auto">
             {staves.map((staff) => (
@@ -333,6 +356,14 @@ function ExportMenu() {
               Audio WAV
             </button>
           </div>
+
+          <button
+            type="button"
+            onClick={handleExportPdf}
+            className="mt-1.5 w-full rounded-md border border-border bg-surface-hover px-2 py-1.5 text-xs text-foreground transition-colors hover:border-primary/60 hover:text-primary"
+          >
+            PDF <span className="opacity-50">(foaia întreagă, A4)</span>
+          </button>
         </div>
       )}
     </div>
@@ -344,11 +375,17 @@ function ExportMenu() {
  * (fișier, export, vizualizare, schimbare temă, cont utilizator).
  */
 export function Header() {
-  const { viewMode, setViewMode, canUndo, canRedo, dispatch } = useScoreEditor()
+  const { viewMode, setViewMode, theme, toggleTheme, canUndo, canRedo, dispatch } = useScoreEditor()
   const isPage = viewMode === "page"
+  const THEME_LABELS: Record<typeof theme, string> = {
+    dark: "Întunecată",
+    light: "Deschisă",
+    "signature-dark": "Signature Dark",
+    "signature-light": "Signature Light",
+  }
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-bar px-4">
+    <header className="frame bar-cream flex h-14 shrink-0 items-center justify-between border-b border-border bg-bar px-4">
       <div className="flex items-center gap-2">
         <span className="font-heading text-lg font-semibold tracking-tight text-foreground">
           NotationSoft
@@ -387,8 +424,23 @@ export function Header() {
           {isPage ? <BookOpen className="size-4" /> : <MoveHorizontal className="size-4" />}
           Vizualizare: {isPage ? "Pagină" : "Continuu"}
         </Button>
-        <Button variant="ghost" size="sm">
-          Temă
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={toggleTheme}
+          title="Schimbă tema (Întunecată → Deschisă → Signature)"
+        >
+          <Palette className="size-4" />
+          Temă: {THEME_LABELS[theme]}
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => window.dispatchEvent(new Event(TOGGLE_HELP_EVENT))}
+          aria-label="Ajutor — taste și moduri (H)"
+          title="Ajutor — taste și moduri (H)"
+        >
+          <HelpCircle className="size-4" />
         </Button>
       </nav>
 

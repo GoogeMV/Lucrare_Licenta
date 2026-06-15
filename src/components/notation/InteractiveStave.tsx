@@ -18,7 +18,7 @@ import {
   GhostNote,
   Tuplet,
 } from "vexflow"
-import { useScoreEditor } from "@/state/scoreEditorContext"
+import { useScoreEditor, type Theme } from "@/state/scoreEditorContext"
 import { buildStaffPositions, pitchIndex, pitchToVexflowKey, TOP_LINE_PITCH } from "@/lib/notation/pitch"
 import { DURATION_HOTKEYS, REST_HOTKEYS, entryBeats, playbackQuarterBpm, tupletNormal, vexflowDurationCode } from "@/lib/notation/duration"
 import { splitIntoMeasures, type MeasureFragment } from "@/lib/notation/measure"
@@ -32,10 +32,24 @@ import { auditionPitches } from "@/lib/audio/audition"
 import { measureQuarters, timeSignatureLabel } from "@/lib/notation/timeSignature"
 import type { Clef, NoteEntry, Pitch, Step } from "@/types/score"
 
-const INK_COLOR = "#e8dcc8"
-const ACCENT_COLOR = "#f3c544" // auriu aprins (spre galben) — selecția notelor sare în ochi
 const STAVE_GRADIENT_ID = "stave-cream-to-gold"
 const SVG_NS = "http://www.w3.org/2000/svg"
+
+/**
+ * Culorile notației de pe foaie, citite din tema curentă (variabilele CSS
+ * `--ink` / `--ink-accent` de pe `<html>`). Așa randarea VexFlow urmează tema:
+ *  - dark: crem (#e8dcc8) pe închis, accent auriu aprins;
+ *  - light: negru pe alb, accent auriu vizibil pe alb.
+ */
+function sheetColors(theme?: Theme) {
+  const cs = getComputedStyle(document.documentElement)
+  const lightSheet = theme === "light" || theme === "signature-light"
+  const fallback = lightSheet ? { ink: "#1c1c1e", accent: "#b8860b" } : { ink: "#e8dcc8", accent: "#f3c544" }
+  return {
+    ink: cs.getPropertyValue("--ink").trim() || fallback.ink,
+    accent: cs.getPropertyValue("--ink-accent").trim() || fallback.accent,
+  }
+}
 
 /**
  * Injectează un gradient SVG (crem -> auriu) folosit pentru a colora
@@ -46,7 +60,7 @@ const SVG_NS = "http://www.w3.org/2000/svg"
  * (`objectBoundingBox`) devine invalid pe un astfel de element și se randează
  * ca transparent. De aceea folosim `userSpaceOnUse` cu coordonate explicite.
  */
-function ensureStaveGradient(svg: SVGSVGElement, x1: number, x2: number) {
+function ensureStaveGradient(svg: SVGSVGElement, x1: number, x2: number, ink: string, accent: string) {
   const existing = svg.querySelector(`#${STAVE_GRADIENT_ID}`)
   if (existing) existing.remove()
 
@@ -60,11 +74,11 @@ function ensureStaveGradient(svg: SVGSVGElement, x1: number, x2: number) {
 
   const start = document.createElementNS(SVG_NS, "stop")
   start.setAttribute("offset", "0%")
-  start.setAttribute("stop-color", INK_COLOR)
+  start.setAttribute("stop-color", ink)
 
   const end = document.createElementNS(SVG_NS, "stop")
   end.setAttribute("offset", "100%")
-  end.setAttribute("stop-color", ACCENT_COLOR)
+  end.setAttribute("stop-color", accent)
 
   gradient.append(start, end)
 
@@ -169,6 +183,7 @@ export function InteractiveStave() {
     meta,
     playbackRate,
     mixer,
+    theme,
     player,
     setIsPlaying,
     dispatch,
@@ -226,6 +241,10 @@ export function InteractiveStave() {
   const draw = useCallback(() => {
     const container = containerRef.current
     if (!container) return
+
+    // culorile notației din tema curentă (citite la fiecare randare → urmează
+    // comutarea light/dark); numele rămân INK_COLOR/ACCENT_COLOR în restul randării
+    const { ink: INK_COLOR, accent: ACCENT_COLOR } = sheetColors(theme)
 
     // golirea containerului (mai jos) colapsează înălțimea la 0, ceea ce face
     // browserul să "prindă" scroll-ul strămoșului la 0; salvăm pozițiile și le
@@ -347,10 +366,14 @@ export function InteractiveStave() {
       svgEl.setAttribute("pointer-events", "auto")
       svgEl.style.pointerEvents = "auto"
       svgEl.style.cursor = "crosshair"
-      ensureStaveGradient(svgEl, contentLeft, contentLeft + availableWidth)
+      // portativul: gradient crem→auriu DOAR în tema Signature Dark; restul, solid
+      if (theme === "signature-dark") {
+        ensureStaveGradient(svgEl, contentLeft, contentLeft + availableWidth, INK_COLOR, ACCENT_COLOR)
+      }
     }
 
-    const staveGradient = `url(#${STAVE_GRADIENT_ID})`
+    // portativul (linii, cheie, armură, măsură): gradient doar în Signature Dark, altfel solid
+    const staveGradient = theme === "signature-dark" ? `url(#${STAVE_GRADIENT_ID})` : INK_COLOR
     const noteIdToStaveNote = new Map<string, StaveNote>()
     const renderedNotes: {
       id: string
@@ -1189,7 +1212,7 @@ export function InteractiveStave() {
     if (container.scrollLeft !== savedScrollLeft) {
       container.scrollLeft = savedScrollLeft
     }
-  }, [staves, activeStaffId, selectedStaffIds, timeSignature, selectedId, selectedIds, selectedPitchIndex, viewMode, lyricMode, dispatch])
+  }, [staves, activeStaffId, selectedStaffIds, timeSignature, selectedId, selectedIds, selectedPitchIndex, viewMode, lyricMode, theme, dispatch])
 
   useEffect(() => {
     draw()
@@ -1271,6 +1294,8 @@ export function InteractiveStave() {
 
       const group = svgNoteElsRef.current.get(noteId)
       if (group) {
+        // accentul din tema curentă (efectul nu se re-abonează la schimbarea temei)
+        const accentColor = sheetColors().accent
         // recolorăm doar elementele care chiar au fill/stroke (păstrăm "none")
         const targets: Element[] = [group, ...group.querySelectorAll("*")]
         for (const el of targets) {
@@ -1280,8 +1305,8 @@ export function InteractiveStave() {
           const paintsStroke = stroke !== null && stroke !== "none"
           if (!paintsFill && !paintsStroke) continue
           highlightRestoreRef.current.push({ el, fill, stroke })
-          if (paintsFill) el.setAttribute("fill", ACCENT_COLOR)
-          if (paintsStroke) el.setAttribute("stroke", ACCENT_COLOR)
+          if (paintsFill) el.setAttribute("fill", accentColor)
+          if (paintsStroke) el.setAttribute("stroke", accentColor)
         }
       }
 
@@ -1740,61 +1765,20 @@ export function InteractiveStave() {
             }}
             className="absolute z-10 w-24 -translate-x-1/2 rounded-sm border border-primary bg-surface px-1 py-0.5 text-center text-xs outline-none"
             // nota editată e cea selectată -> text auriu, ca pe foaie (vezi randarea SVG)
-            style={{ left: lyricPos.left, top: lyricPos.top, color: ACCENT_COLOR, caretColor: ACCENT_COLOR }}
+            style={{ left: lyricPos.left, top: lyricPos.top, color: "var(--ink-accent)", caretColor: "var(--ink-accent)" }}
             placeholder="versuri…"
           />
         )}
       </div>
-      {lyricMode ? (
-        <p className="px-1 text-xs">
+      {(noteInputMode || lyricMode) && (
+        <p className="px-1 text-xs print:hidden">
           <span className="rounded-sm bg-primary/20 px-1.5 py-0.5 font-medium text-primary">
-            ● Versuri
+            ● {lyricMode ? "Versuri" : "Introducere note"}
           </span>{" "}
           <span className="text-foreground-muted">
-            Scrie silaba sub nota selectată ·{" "}
-            <span className="text-foreground">Space / Tab</span> nota următoare ·{" "}
-            <span className="text-foreground">Shift+Tab</span> nota anterioară · Click pe o notă o alege ·{" "}
-            <span className="text-foreground">Enter / Esc / M</span> termină (păstrează silaba)
+            apasă <span className="text-foreground">H</span> pentru taste ·{" "}
+            <span className="text-foreground">Esc</span> ieșire
           </span>
-        </p>
-      ) : noteInputMode ? (
-        <p className="px-1 text-xs">
-          <span className="rounded-sm bg-primary/20 px-1.5 py-0.5 font-medium text-primary">
-            ● Introducere note
-          </span>{" "}
-          <span className="text-foreground-muted">
-            <span className="text-foreground">C D E F G A B</span> introduc nota (octava cea mai apropiată) ·{" "}
-            <span className="text-foreground">0</span> pauză · <span className="text-foreground">1–5</span> durata
-            (întreagă → șaisprezecime) · <span className="text-foreground">.</span> punct ·{" "}
-            <span className="text-foreground">[ ] \</span> alterație ·{" "}
-            <span className="text-foreground">↑ / ↓</span> ajustează înălțimea ·{" "}
-            <span className="text-foreground">Q</span> deselectează (adaugi la final) ·{" "}
-            <span className="text-foreground">N / Esc</span> ieșire
-          </span>
-        </p>
-      ) : (
-        <p className="px-1 text-xs text-foreground-muted">
-          <span className="text-foreground">N</span> introducere note din tastatură · Click pe un portativ — adaugă o
-          notă (devine activ) · Click pe o notă — o selectează ·{" "}
-          <span className="text-foreground">← / →</span> circulă între note ·{" "}
-          <span className="text-foreground">↑ / ↓</span> schimbă înălțimea ·{" "}
-          <span className="text-foreground">Q W E R T</span> durata ·{" "}
-          <span className="text-foreground">Enter</span> notă nouă ·{" "}
-          <span className="text-foreground">A S D F G</span> pauză ·{" "}
-          <span className="text-foreground">[ ] \</span> alterație ·{" "}
-          <span className="text-foreground">.</span> punct ·{" "}
-          <span className="text-foreground">P</span> notă ↔ pauză ·{" "}
-          <span className="text-foreground">L</span> legato ·{" "}
-          <span className="text-foreground">Ctrl+3</span> triolet ·{" "}
-          <span className="text-foreground">M</span> versuri ·{" "}
-          <span className="text-foreground">Delete</span> șterge ·{" "}
-          <span className="text-foreground">Space</span> redă (selecția / portativul bifat / tot) ·{" "}
-          <span className="text-foreground">Esc</span> deselectează (adaugi liber la final) ·{" "}
-          <span className="text-foreground">Shift+click</span> / <span className="text-foreground">Shift+←→</span>{" "}
-          / <span className="text-foreground">Shift+drag</span> selectează un interval ·{" "}
-          <span className="text-foreground">Alt+click</span> adaugă/scoate o notă ·{" "}
-          <span className="text-foreground">Ctrl+C / X / V</span> copiază / taie / lipește ·{" "}
-          <span className="text-foreground">Ctrl+click pe portativ</span> îl bifează pentru redare parțială
         </p>
       )}
     </div>

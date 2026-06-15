@@ -139,8 +139,8 @@ export function ScoreEditor() {
   const [isDragOver, setIsDragOver] = useState(false)
 
   return (
-    <main className="flex flex-1 flex-col overflow-auto bg-background">
-      <div className="flex items-start justify-between gap-4 px-6 pt-4">
+    <main className="desk-wood flex flex-1 flex-col overflow-auto bg-background">
+      <div className="frame flex items-start justify-between gap-4 px-6 pt-4">
         <StaffList />
         <SignatureControls />
       </div>
@@ -162,7 +162,7 @@ export function ScoreEditor() {
             dispatch({ type: "addStaff", instrument })
           }}
           className={cn(
-            "w-full max-w-4xl rounded-md border border-border/60 bg-sheet px-8 py-7 shadow-2xl shadow-black/40 transition-shadow",
+            "score-sheet w-full max-w-4xl rounded-md border border-border/60 px-8 py-7 shadow-2xl shadow-black/40 transition-shadow",
             isDragOver && "border-primary ring-2 ring-primary/60",
           )}
         >

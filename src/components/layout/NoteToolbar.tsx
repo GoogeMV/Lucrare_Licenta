@@ -229,7 +229,7 @@ function DurationGroup() {
  */
 export function NoteToolbar() {
   return (
-    <aside className="flex w-52 shrink-0 flex-col gap-4 border-l border-border bg-panel p-3">
+    <aside className="frame flex w-52 shrink-0 flex-col gap-4 border-l border-border bg-panel p-3">
       <h2 className="text-xs font-semibold tracking-wide text-foreground-muted uppercase">
         Toolbar note
       </h2>

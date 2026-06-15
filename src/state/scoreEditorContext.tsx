@@ -25,6 +25,28 @@ import type { Duration } from "@/types/score"
  */
 export type ViewMode = "page" | "continuous"
 
+/**
+ * Tema vizuală (4 opțiuni — pereche curat/decorativ pe fiecare luminozitate):
+ *  - „dark" — întunecată clasică (tonuri de negru, accent argintiu);
+ *  - „light" — curată stil iOS (alb/gri, accent auriu), bună pentru print;
+ *  - „signature-dark" — decorativă întunecată (burgundy/crem/auriu);
+ *  - „signature-light" — decorativă deschisă (ramă verde, pergament, lemn).
+ */
+export type Theme = "dark" | "light" | "signature-dark" | "signature-light"
+
+const THEME_CYCLE: Theme[] = ["dark", "light", "signature-dark", "signature-light"]
+
+/** Aplică tema prin clase pe <html>. Temele „dark" și „signature-dark" au amândouă
+ *  clasa .dark (pentru variantele shadcn `dark:`); signature-* adaugă clasa proprie. */
+function applyThemeClass(theme: Theme) {
+  const el = document.documentElement
+  el.classList.remove("dark", "signature-dark", "signature-light")
+  if (theme === "dark") el.classList.add("dark")
+  else if (theme === "signature-dark") el.classList.add("dark", "signature-dark")
+  else if (theme === "signature-light") el.classList.add("signature-light")
+  // „light" → nicio clasă (tokenii din :root)
+}
+
 /** Metadatele partiturii (titlu, compozitor, tempo ♩=X) — date ale piesei
  *  (se salvează și se exportă), dar în afara istoricului undo: tastarea în
  *  titlu sau tragerea slider-ului de tempo nu trebuie să creeze pași de anulare */
@@ -49,6 +71,10 @@ interface ScoreEditorValue extends ScoreState {
   setMeta: (changes: Partial<ScoreMeta>) => void
   viewMode: ViewMode
   setViewMode: (mode: ViewMode) => void
+  /** Tema curentă + comutator (ciclează) + setare directă (folosită la export PDF) */
+  theme: Theme
+  toggleTheme: () => void
+  setTheme: (theme: Theme) => void
   /** Viteza de redare (%, implicit 100) — separată de tempo-ul notat; nu se
    *  salvează și nu intră în undo (reglaj de practică „pe parcurs") */
   playbackRate: number
@@ -76,6 +102,31 @@ const ScoreEditorContext = createContext<ScoreEditorValue | null>(null)
 export function ScoreEditorProvider({ children }: { children: ReactNode }) {
   const [history, dispatch] = useReducer(historyReducer, initialHistoryState)
   const [viewMode, setViewMode] = useState<ViewMode>("page")
+  // tema: implicit dark (ca în <html class="dark">), suprascrisă din localStorage
+  const [theme, setThemeState] = useState<Theme>(() => {
+    const saved = typeof localStorage !== "undefined" ? localStorage.getItem("notationsoft-theme") : null
+    return saved === "light" || saved === "signature-light" || saved === "signature-dark" || saved === "dark"
+      ? saved
+      : "dark"
+  })
+  // aplicăm/persistăm tema; clasele de pe <html> comută tokenii din index.css
+  useEffect(() => {
+    applyThemeClass(theme)
+    try {
+      localStorage.setItem("notationsoft-theme", theme)
+    } catch {
+      /* localStorage indisponibil — ignorăm */
+    }
+  }, [theme])
+  function setTheme(next: Theme) {
+    // comutăm clasa SINCRON, ca redesenarea foii (InteractiveStave) să citească
+    // imediat culorile noi (--ink / --ink-accent) la următoarea randare
+    applyThemeClass(next)
+    setThemeState(next)
+  }
+  function toggleTheme() {
+    setTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length])
+  }
   const [playbackRate, setPlaybackRate] = useState(100)
   const [mixer, setMixer] = useState<Record<string, { volume: number; muted: boolean }>>({})
   const [isPlaying, setIsPlaying] = useState(false)
@@ -102,6 +153,9 @@ export function ScoreEditorProvider({ children }: { children: ReactNode }) {
         setMeta: (changes) => setMetaState((current) => ({ ...current, ...changes })),
         viewMode,
         setViewMode,
+        theme,
+        toggleTheme,
+        setTheme,
         playbackRate,
         setPlaybackRate,
         mixer,

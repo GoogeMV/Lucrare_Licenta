@@ -39,7 +39,7 @@ export function InstrumentPalette() {
   const { dispatch } = useScoreEditor()
 
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-panel">
+    <aside className="frame flex w-56 shrink-0 flex-col border-r border-border bg-panel">
       <div className="border-b border-border px-3 py-2">
         <h2 className="text-xs font-semibold tracking-wide text-foreground-muted uppercase">
           Instrumente
