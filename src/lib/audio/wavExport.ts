@@ -36,18 +36,20 @@ export async function renderScoreToWav(parts: PlaybackPart[], bpm: number): Prom
     parts.forEach((part, partIndex) => {
       const sound = sounds[partIndex]
       const keyMap = keyAccidentalMap(part.keySignature)
+      const staffMuted = part.muted ?? false
+      const staffVolume = part.volume ?? 1
       let offset = 0
       let velocity = DEFAULT_VELOCITY
       for (const entry of part.notes) {
         const durationSeconds = entryBeats(entry) * secondsPerBeat
         if (entry.dynamic) velocity = DYNAMIC_VELOCITY[entry.dynamic]
-        if (entry.type === "note") {
+        if (entry.type === "note" && !staffMuted) {
           const toneNotes = entry.pitches.map((pitch) =>
             pitchToToneNote({ ...pitch, accidental: pitch.accidental ?? keyMap[pitch.step] }),
           )
           const isStaccato = entry.articulations?.includes("staccato")
           const sounded = durationSeconds * (isStaccato ? 0.4 : 0.9)
-          sound.triggerAttackRelease(toneNotes, sounded, LEAD_SECONDS + offset, velocity)
+          sound.triggerAttackRelease(toneNotes, sounded, LEAD_SECONDS + offset, velocity * staffVolume)
         }
         offset += durationSeconds
       }

@@ -33,7 +33,7 @@ import { measureQuarters, timeSignatureLabel } from "@/lib/notation/timeSignatur
 import type { Clef, NoteEntry, Pitch, Step } from "@/types/score"
 
 const INK_COLOR = "#e8dcc8"
-const ACCENT_COLOR = "#c9a96e"
+const ACCENT_COLOR = "#f3c544" // auriu aprins (spre galben) — selecția notelor sare în ochi
 const STAVE_GRADIENT_ID = "stave-cream-to-gold"
 const SVG_NS = "http://www.w3.org/2000/svg"
 
@@ -168,6 +168,7 @@ export function InteractiveStave() {
     viewMode,
     meta,
     playbackRate,
+    mixer,
     player,
     setIsPlaying,
     dispatch,
@@ -1457,7 +1458,7 @@ export function InteractiveStave() {
         // citim selecția DIRECT (nu din ref) ca să fie mereu la zi
         const bpm = playbackQuarterBpm(meta.tempo, meta.tempoBeat, meta.tempoBeatDotted, playbackRate)
         const noteIds = selectedIds.length ? selectedIds : selectedId ? [selectedId] : []
-        let parts: { notes: NoteEntry[]; keySignature: string; instrument: string }[]
+        let parts: { notes: NoteEntry[]; keySignature: string; instrument: string; volume: number; muted: boolean }[]
         let highlightPartIndex: number
         if (noteIds.length > 0) {
           // doar notele selectate (păstrăm selecția aurie) — grupate pe portativ,
@@ -1469,6 +1470,8 @@ export function InteractiveStave() {
             notes: s.notes.filter((n) => idSet.has(n.id)),
             keySignature: s.keySignature,
             instrument: s.instrument,
+            volume: mixer[s.id]?.volume ?? 1,
+            muted: mixer[s.id]?.muted ?? false,
           }))
           const headIdx = playedStaves.findIndex((s) => s.notes.some((n) => n.id === selectedId))
           highlightPartIndex = headIdx >= 0 ? headIdx : 0
@@ -1478,7 +1481,13 @@ export function InteractiveStave() {
             ? staves.filter((s) => selectedStaffIds.includes(s.id))
             : staves
           if (played.length === 0) return
-          parts = played.map((s) => ({ notes: s.notes, keySignature: s.keySignature, instrument: s.instrument }))
+          parts = played.map((s) => ({
+            notes: s.notes,
+            keySignature: s.keySignature,
+            instrument: s.instrument,
+            volume: mixer[s.id]?.volume ?? 1,
+            muted: mixer[s.id]?.muted ?? false,
+          }))
           const activeAmong = played.findIndex((s) => s.id === activeStaffId)
           highlightPartIndex = activeAmong >= 0 ? activeAmong : 0
         }
@@ -1660,6 +1669,7 @@ export function InteractiveStave() {
     selectedDuration,
     noteInputMode,
     lyricMode,
+    mixer,
     meta.tempo,
     meta.tempoBeat,
     meta.tempoBeatDotted,

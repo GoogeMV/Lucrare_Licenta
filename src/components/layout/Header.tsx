@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from "react"
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { BookOpen, Check, ChevronDown, MoveHorizontal, Redo2, Undo2 } from "lucide-react"
 import { useScoreEditor } from "@/state/scoreEditorContext"
@@ -6,7 +6,43 @@ import { saveScore, loadScore, hasSavedScore } from "@/lib/storage/scoreStorage"
 import { scoreToMusicXML } from "@/lib/export/musicxml"
 import { parseMusicXML } from "@/lib/import/musicxml"
 import { renderScoreToWav } from "@/lib/audio/wavExport"
-import { playbackQuarterBpm } from "@/lib/notation/duration"
+import { entryBeats, playbackQuarterBpm } from "@/lib/notation/duration"
+import { splitIntoMeasures } from "@/lib/notation/measure"
+import { measureQuarters } from "@/lib/notation/timeSignature"
+import { instrumentLabel } from "@/lib/notation/instrument"
+import type { Clef, Staff, TimeSignature } from "@/types/score"
+
+const CLEF_RO: Record<Clef, string> = { treble: "cheie sol", bass: "cheie fa", alto: "cheie do" }
+
+/**
+ * Construiește portativele de exportat: păstrează doar instrumentele bifate și,
+ * dacă intervalul de măsuri nu e complet, doar notele care ÎNCEP în interval
+ * (legăturile către note tăiate se elimină). Folosit identic la MusicXML și WAV.
+ */
+function buildExportStaves(
+  staves: Staff[],
+  timeSignature: TimeSignature,
+  includedIds: Set<string>,
+  fromMeasure: number,
+  toMeasure: number,
+  totalMeasures: number,
+): Staff[] {
+  const chosen = staves.filter((s) => includedIds.has(s.id))
+  if (fromMeasure <= 1 && toMeasure >= totalMeasures) return chosen
+  const beatsPerMeasure = measureQuarters(timeSignature)
+  const startBeat = (fromMeasure - 1) * beatsPerMeasure
+  const endBeat = toMeasure * beatsPerMeasure
+  return chosen.map((staff) => {
+    const kept = []
+    let beat = 0
+    for (const note of staff.notes) {
+      if (beat >= startBeat - 1e-6 && beat < endBeat - 1e-6) kept.push(note)
+      beat += entryBeats(note)
+    }
+    const keptIds = new Set(kept.map((n) => n.id))
+    return { ...staff, notes: kept, slurs: staff.slurs.filter((sl) => keptIds.has(sl.fromId) && keptIds.has(sl.toId)) }
+  })
+}
 
 const MENU_ITEM_CLASS =
   "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
@@ -130,14 +166,24 @@ function FileMenu() {
 }
 
 /**
- * Meniul Export: descarcă partitura ca MusicXML (schimb cu MuseScore/Finale/
- * Sibelius) sau ca audio WAV (randat offline). Dropdown ca meniul Fișier.
+ * Meniul Export: alegi CE instrumente și (opțional) ce interval de măsuri
+ * exporți, apoi formatul — MusicXML (schimb cu MuseScore/Finale/Sibelius) sau
+ * audio WAV (randat offline). Implicit: instrumentele bifate pentru redare
+ * parțială (Ctrl+click), altfel toate; intervalul de măsuri întreg.
  */
 function ExportMenu() {
-  const { staves, timeSignature, meta } = useScoreEditor()
+  const { staves, timeSignature, meta, selectedStaffIds, mixer } = useScoreEditor()
   const [open, setOpen] = useState(false)
   const [isRendering, setIsRendering] = useState(false)
+  const [included, setIncluded] = useState<Set<string>>(new Set())
+  const [fromMeasure, setFromMeasure] = useState(1)
+  const [toMeasure, setToMeasure] = useState(1)
   const wrapperRef = useRef<HTMLDivElement>(null)
+
+  const totalMeasures = useMemo(() => {
+    const beatsPerMeasure = measureQuarters(timeSignature)
+    return Math.max(1, ...staves.map((s) => splitIntoMeasures(s.notes, beatsPerMeasure).length))
+  }, [staves, timeSignature])
 
   useEffect(() => {
     if (!open) return
@@ -148,7 +194,24 @@ function ExportMenu() {
     return () => document.removeEventListener("mousedown", onMouseDown)
   }, [open])
 
-  // numele fișierului din titlu (fără caractere problematice pentru sisteme de fișiere)
+  // la deschidere, pornim de la instrumentele bifate (sau toate) și intervalul întreg
+  function openMenu() {
+    const defaults = selectedStaffIds.length ? selectedStaffIds : staves.map((s) => s.id)
+    setIncluded(new Set(defaults))
+    setFromMeasure(1)
+    setToMeasure(totalMeasures)
+    setOpen(true)
+  }
+
+  function toggleStaff(id: string) {
+    setIncluded((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
   function fileBase() {
     return meta.title.trim().replace(/[\\/:*?"<>|]/g, "").slice(0, 60) || "partitura"
   }
@@ -161,16 +224,37 @@ function ExportMenu() {
     URL.revokeObjectURL(url)
   }
 
+  // portativele de exportat după selecția curentă (instrumente + interval măsuri)
+  function exportStaves(): Staff[] | null {
+    const from = Math.max(1, Math.min(fromMeasure, toMeasure))
+    const to = Math.min(totalMeasures, Math.max(fromMeasure, toMeasure))
+    const result = buildExportStaves(staves, timeSignature, included, from, to, totalMeasures)
+    if (result.length === 0) {
+      window.alert("Selectează cel puțin un instrument pentru export.")
+      return null
+    }
+    return result
+  }
+
   function handleExportXml() {
+    const chosen = exportStaves()
+    if (!chosen) return
     setOpen(false)
-    const xml = scoreToMusicXML(staves, timeSignature, meta)
+    const xml = scoreToMusicXML(chosen, timeSignature, meta)
     download(new Blob([xml], { type: "application/vnd.recordare.musicxml+xml" }), "musicxml")
   }
 
   async function handleExportWav() {
+    const chosen = exportStaves()
+    if (!chosen || isRendering) return
     setOpen(false)
-    if (isRendering) return
-    const parts = staves.map((s) => ({ notes: s.notes, keySignature: s.keySignature, instrument: s.instrument }))
+    const parts = chosen.map((s) => ({
+      notes: s.notes,
+      keySignature: s.keySignature,
+      instrument: s.instrument,
+      volume: mixer[s.id]?.volume ?? 1,
+      muted: mixer[s.id]?.muted ?? false,
+    }))
     // randăm la tempo-ul NOTAT (viteza de redare e doar reglaj de practică)
     const bpm = playbackQuarterBpm(meta.tempo, meta.tempoBeat, meta.tempoBeatDotted, 100)
     setIsRendering(true)
@@ -185,17 +269,70 @@ function ExportMenu() {
 
   return (
     <div ref={wrapperRef} className="relative">
-      <Button variant="ghost" size="sm" onClick={() => setOpen((o) => !o)} disabled={isRendering}>
+      <Button variant="ghost" size="sm" onClick={() => (open ? setOpen(false) : openMenu())} disabled={isRendering}>
         {isRendering ? "Se randează…" : <>Export <ChevronDown className="size-3 opacity-60" /></>}
       </Button>
       {open && (
-        <div className="absolute top-full left-0 z-50 mt-1 w-56 rounded-md border border-border bg-surface p-1 shadow-lg">
-          <button type="button" className={MENU_ITEM_CLASS} onClick={handleExportXml}>
-            Ca MusicXML <span className="ml-auto text-xs opacity-50">.musicxml</span>
-          </button>
-          <button type="button" className={MENU_ITEM_CLASS} onClick={handleExportWav}>
-            Ca audio <span className="ml-auto text-xs opacity-50">.wav</span>
-          </button>
+        <div className="absolute top-full left-0 z-50 mt-1 w-64 rounded-md border border-border bg-surface p-2 shadow-lg">
+          <p className="px-1 pb-1 text-[11px] font-medium text-foreground-muted">Instrumente</p>
+          <div className="max-h-48 overflow-y-auto">
+            {staves.map((staff) => (
+              <label
+                key={staff.id}
+                className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-sm hover:bg-surface-hover"
+              >
+                <input
+                  type="checkbox"
+                  checked={included.has(staff.id)}
+                  onChange={() => toggleStaff(staff.id)}
+                  className="accent-primary"
+                />
+                <span className="truncate">
+                  {instrumentLabel(staff.instrument)}
+                  {staff.groupId && <span className="text-foreground-muted"> ({CLEF_RO[staff.clef]})</span>}
+                </span>
+              </label>
+            ))}
+          </div>
+
+          <div className="mt-1 flex items-center gap-1.5 border-t border-border px-1 pt-2 text-xs text-foreground-muted">
+            <span>Măsuri</span>
+            <input
+              type="number"
+              min={1}
+              max={totalMeasures}
+              value={fromMeasure}
+              onChange={(e) => setFromMeasure(Number(e.target.value) || 1)}
+              className="w-12 rounded-sm border border-border bg-surface-hover px-1 py-0.5 text-center text-foreground"
+            />
+            <span>–</span>
+            <input
+              type="number"
+              min={1}
+              max={totalMeasures}
+              value={toMeasure}
+              onChange={(e) => setToMeasure(Number(e.target.value) || totalMeasures)}
+              className="w-12 rounded-sm border border-border bg-surface-hover px-1 py-0.5 text-center text-foreground"
+            />
+            <span className="ml-auto opacity-60">din {totalMeasures}</span>
+          </div>
+
+          <div className="mt-2 flex gap-1.5 border-t border-border pt-2">
+            <button
+              type="button"
+              onClick={handleExportXml}
+              className="flex-1 rounded-md border border-border bg-surface-hover px-2 py-1.5 text-xs text-foreground transition-colors hover:border-primary/60 hover:text-primary"
+            >
+              MusicXML
+            </button>
+            <button
+              type="button"
+              onClick={handleExportWav}
+              className="flex-1 rounded-md border border-border bg-surface-hover px-2 py-1.5 text-xs text-foreground transition-colors hover:border-primary/60 hover:text-primary"
+            >
+              Audio WAV
+            </button>
+          </div>
         </div>
       )}
     </div>

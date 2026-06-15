@@ -53,6 +53,11 @@ interface ScoreEditorValue extends ScoreState {
    *  salvează și nu intră în undo (reglaj de practică „pe parcurs") */
   playbackRate: number
   setPlaybackRate: (percent: number) => void
+  /** Mixer per portativ (volum 0–1 + mute), pe id de portativ — reglaj de redare
+   *  (nu intră în undo, nu se salvează). Lipsă = volum 1, nemutat. */
+  mixer: Record<string, { volume: number; muted: boolean }>
+  setStaffVolume: (staffId: string, volume: number) => void
+  toggleStaffMute: (staffId: string) => void
   /** Player-ul audio partajat (folosit și de bara de transport, și de Space) —
    *  unul singur, ca redările să nu se suprapună */
   player: ScorePlayer
@@ -72,6 +77,7 @@ export function ScoreEditorProvider({ children }: { children: ReactNode }) {
   const [history, dispatch] = useReducer(historyReducer, initialHistoryState)
   const [viewMode, setViewMode] = useState<ViewMode>("page")
   const [playbackRate, setPlaybackRate] = useState(100)
+  const [mixer, setMixer] = useState<Record<string, { volume: number; muted: boolean }>>({})
   const [isPlaying, setIsPlaying] = useState(false)
   // un singur player pe toată aplicația — partajat între Play și Space
   const [player] = useState(() => new ScorePlayer())
@@ -98,6 +104,14 @@ export function ScoreEditorProvider({ children }: { children: ReactNode }) {
         setViewMode,
         playbackRate,
         setPlaybackRate,
+        mixer,
+        setStaffVolume: (staffId, volume) =>
+          setMixer((m) => ({ ...m, [staffId]: { volume, muted: m[staffId]?.muted ?? false } })),
+        toggleStaffMute: (staffId) =>
+          setMixer((m) => ({
+            ...m,
+            [staffId]: { volume: m[staffId]?.volume ?? 1, muted: !(m[staffId]?.muted ?? false) },
+          })),
         player,
         isPlaying,
         setIsPlaying,

@@ -15,6 +15,10 @@ export interface PlaybackPart {
   notes: NoteEntry[]
   keySignature: KeySignature
   instrument: string
+  /** Volumul din mixer (0–1, implicit 1) — scalează atacul fiecărei note */
+  volume?: number
+  /** Mut din mixer (implicit false) — portativul nu sună deloc */
+  muted?: boolean
 }
 
 export interface PlaybackOptions {
@@ -98,6 +102,9 @@ export class ScorePlayer {
       const sound = sounds[partIndex]
       // fiecare portativ își aplică propria armură (instrumente transpozitorii)
       const keyMap = keyAccidentalMap(part.keySignature)
+      // volumul din mixer: mut → nu sună deloc; altfel scalează atacul notelor
+      const staffMuted = part.muted ?? false
+      const staffVolume = part.volume ?? 1
       let offset = 0 // în secunde, de la începutul redării, pentru acest portativ
       // volumul curent (nuanța în vigoare) — fiecare nuanță întâlnită îl schimbă
       // și rămâne până la următoarea, ca în notația tipărită
@@ -106,7 +113,7 @@ export class ScorePlayer {
         const durationSeconds = entryBeats(entry) * secondsPerBeat
         if (entry.dynamic) velocity = DYNAMIC_VELOCITY[entry.dynamic]
 
-        if (entry.type === "note") {
+        if (entry.type === "note" && !staffMuted) {
           // toate înălțimile intrării (acord) — fără alterație explicită,
           // fiecare sună conform armurii (ex. Fa → Fa♯ în Sol major)
           const toneNotes = entry.pitches.map((pitch) =>
@@ -115,7 +122,7 @@ export class ScorePlayer {
           // staccato scurtează nota redată; restul notelor sună ~90% din durată
           const isStaccato = entry.articulations?.includes("staccato")
           const sounded = durationSeconds * (isStaccato ? 0.4 : 0.9)
-          sound.triggerAttackRelease(toneNotes, sounded, startTime + offset, velocity)
+          sound.triggerAttackRelease(toneNotes, sounded, startTime + offset, velocity * staffVolume)
         }
 
         // evidențiem nota curentă doar pentru portativul urmărit
