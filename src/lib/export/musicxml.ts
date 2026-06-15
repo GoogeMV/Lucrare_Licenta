@@ -51,6 +51,39 @@ const ARTICULATION_TAGS: Record<Articulation, string> = {
   marcato: "strong-accent",
 }
 
+/**
+ * Programul General MIDI (1–128) al fiecărui instrument — fără el, MuseScore
+ * tratează toate părțile ca pian. Cele nemapate cad pe pian (1).
+ */
+const MIDI_PROGRAM: Record<string, number> = {
+  Vioară: 41,
+  Violă: 42,
+  Violoncel: 43,
+  Contrabas: 44,
+  Flaut: 74,
+  Oboi: 69,
+  Clarinet: 72,
+  Fagot: 71,
+  Trompetă: 57,
+  Corn: 61,
+  Trombon: 58,
+  Tubă: 59,
+  Pian: 1,
+  "Pian electric": 5,
+  Orgă: 20,
+  Chitară: 26,
+  "Chitară electrică": 28,
+  "Chitară clasică": 25,
+  "Chitară bas": 34,
+  "Voce (cor)": 53,
+}
+
+/** Canalul MIDI al unei părți (1–16), sărind canalul 10 (rezervat percuției) */
+function midiChannel(partIndex: number): number {
+  const c = (partIndex % 15) + 1
+  return c >= 10 ? c + 1 : c
+}
+
 function escapeXml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
@@ -76,10 +109,19 @@ export function scoreToMusicXML(
   )
 
   const partList = staves
-    .map(
-      (staff, i) =>
-        `    <score-part id="P${i + 1}"><part-name>${escapeXml(staff.instrument)}</part-name></score-part>`,
-    )
+    .map((staff, i) => {
+      const name = escapeXml(staff.instrument)
+      const program = MIDI_PROGRAM[staff.instrument] ?? 1
+      // score-instrument + midi-instrument: așa MuseScore alege timbrul corect
+      // (altfel toate părțile sunt redate ca pian)
+      return [
+        `    <score-part id="P${i + 1}">`,
+        `      <part-name>${name}</part-name>`,
+        `      <score-instrument id="P${i + 1}-I1"><instrument-name>${name}</instrument-name></score-instrument>`,
+        `      <midi-instrument id="P${i + 1}-I1"><midi-channel>${midiChannel(i)}</midi-channel><midi-program>${program}</midi-program></midi-instrument>`,
+        `    </score-part>`,
+      ].join("\n")
+    })
     .join("\n")
 
   const parts = staves

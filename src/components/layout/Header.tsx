@@ -5,6 +5,8 @@ import { useScoreEditor } from "@/state/scoreEditorContext"
 import { saveScore, loadScore, hasSavedScore } from "@/lib/storage/scoreStorage"
 import { scoreToMusicXML } from "@/lib/export/musicxml"
 import { parseMusicXML } from "@/lib/import/musicxml"
+import { renderScoreToWav } from "@/lib/audio/wavExport"
+import { playbackQuarterBpm } from "@/lib/notation/duration"
 
 const MENU_ITEM_CLASS =
   "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
@@ -128,34 +130,75 @@ function FileMenu() {
 }
 
 /**
- * Butonul Export: descarcă partitura ca MusicXML — formatul standard de schimb,
- * care se deschide direct în MuseScore / Finale / Sibelius.
+ * Meniul Export: descarcă partitura ca MusicXML (schimb cu MuseScore/Finale/
+ * Sibelius) sau ca audio WAV (randat offline). Dropdown ca meniul Fișier.
  */
-function ExportButton() {
+function ExportMenu() {
   const { staves, timeSignature, meta } = useScoreEditor()
+  const [open, setOpen] = useState(false)
+  const [isRendering, setIsRendering] = useState(false)
+  const wrapperRef = useRef<HTMLDivElement>(null)
 
-  function handleExport() {
-    const xml = scoreToMusicXML(staves, timeSignature, meta)
-    const blob = new Blob([xml], { type: "application/vnd.recordare.musicxml+xml" })
+  useEffect(() => {
+    if (!open) return
+    function onMouseDown(event: MouseEvent) {
+      if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", onMouseDown)
+    return () => document.removeEventListener("mousedown", onMouseDown)
+  }, [open])
+
+  // numele fișierului din titlu (fără caractere problematice pentru sisteme de fișiere)
+  function fileBase() {
+    return meta.title.trim().replace(/[\\/:*?"<>|]/g, "").slice(0, 60) || "partitura"
+  }
+  function download(blob: Blob, extension: string) {
     const url = URL.createObjectURL(blob)
     const link = document.createElement("a")
     link.href = url
-    // numele fișierului din titlu (fără caractere problematice pentru sisteme de fișiere)
-    const safeTitle = meta.title.trim().replace(/[\\/:*?"<>|]/g, "").slice(0, 60)
-    link.download = `${safeTitle || "partitura"}.musicxml`
+    link.download = `${fileBase()}.${extension}`
     link.click()
     URL.revokeObjectURL(url)
   }
 
+  function handleExportXml() {
+    setOpen(false)
+    const xml = scoreToMusicXML(staves, timeSignature, meta)
+    download(new Blob([xml], { type: "application/vnd.recordare.musicxml+xml" }), "musicxml")
+  }
+
+  async function handleExportWav() {
+    setOpen(false)
+    if (isRendering) return
+    const parts = staves.map((s) => ({ notes: s.notes, keySignature: s.keySignature, instrument: s.instrument }))
+    // randăm la tempo-ul NOTAT (viteza de redare e doar reglaj de practică)
+    const bpm = playbackQuarterBpm(meta.tempo, meta.tempoBeat, meta.tempoBeatDotted, 100)
+    setIsRendering(true)
+    try {
+      download(await renderScoreToWav(parts, bpm), "wav")
+    } catch (error) {
+      window.alert(`Exportul WAV a eșuat: ${error instanceof Error ? error.message : "eroare"}`)
+    } finally {
+      setIsRendering(false)
+    }
+  }
+
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={handleExport}
-      title="Descarcă partitura ca MusicXML (se deschide în MuseScore)"
-    >
-      Export
-    </Button>
+    <div ref={wrapperRef} className="relative">
+      <Button variant="ghost" size="sm" onClick={() => setOpen((o) => !o)} disabled={isRendering}>
+        {isRendering ? "Se randează…" : <>Export <ChevronDown className="size-3 opacity-60" /></>}
+      </Button>
+      {open && (
+        <div className="absolute top-full left-0 z-50 mt-1 w-56 rounded-md border border-border bg-surface p-1 shadow-lg">
+          <button type="button" className={MENU_ITEM_CLASS} onClick={handleExportXml}>
+            Ca MusicXML <span className="ml-auto text-xs opacity-50">.musicxml</span>
+          </button>
+          <button type="button" className={MENU_ITEM_CLASS} onClick={handleExportWav}>
+            Ca audio <span className="ml-auto text-xs opacity-50">.wav</span>
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -197,7 +240,7 @@ export function Header() {
           <Redo2 className="size-4" />
         </Button>
         <FileMenu />
-        <ExportButton />
+        <ExportMenu />
         <Button
           variant="ghost"
           size="sm"

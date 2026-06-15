@@ -129,6 +129,15 @@ function loadSampler(family: string): Promise<InstrumentSound> {
 }
 
 /**
+ * Construiește un sunet NOU pentru un instrument, în contextul audio curent și
+ * FĂRĂ cache — necesar la randarea WAV offline (`Tone.Offline` rulează într-un
+ * context separat, deci nu putem refolosi instanțele din cache-ul live).
+ */
+export function createInstrument(instrument: string): Promise<InstrumentSound> {
+  return loadSampler(INSTRUMENT_SAMPLE_FAMILY[instrument] ?? "piano")
+}
+
+/**
  * Sunetul pentru un instrument din paletă — eșantioane reale, cu cache pe
  * sesiune; la eșec (offline/CDN căzut) întoarce sintetizatorul generic.
  */
