@@ -6,10 +6,12 @@ import { NoteToolbar } from "@/components/layout/NoteToolbar"
 import { TransportBar } from "@/components/layout/TransportBar"
 import { HelpOverlay } from "@/components/layout/HelpOverlay"
 import { ScoreEditorProvider } from "@/state/scoreEditorContext"
+import { AuthProvider } from "@/state/authContext"
 
 function App() {
   return (
     <TooltipProvider delay={200}>
+      <AuthProvider>
       <ScoreEditorProvider>
         <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
           <Header />
@@ -22,6 +24,7 @@ function App() {
           <HelpOverlay />
         </div>
       </ScoreEditorProvider>
+      </AuthProvider>
     </TooltipProvider>
   )
 }

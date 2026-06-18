@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { BookOpen, Check, ChevronDown, HelpCircle, MoveHorizontal, Palette, Redo2, Undo2 } from "lucide-react"
 import { TOGGLE_HELP_EVENT } from "@/components/layout/HelpOverlay"
+import { AccountMenu } from "@/components/layout/AccountMenu"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { saveScore, loadScore, hasSavedScore } from "@/lib/storage/scoreStorage"
 import { scoreToMusicXML } from "@/lib/export/musicxml"
@@ -264,7 +265,7 @@ function ExportMenu() {
     }
     window.addEventListener("afterprint", onAfterPrint)
     // lăsăm foaia să se redeseneze (temă + pagină) înainte de dialogul de print
-    window.setTimeout(() => window.print(), 150)
+    window.setTimeout(() => window.print(), 280)
   }
 
   async function handleExportWav() {
@@ -445,9 +446,7 @@ export function Header() {
       </nav>
 
       <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm">
-          Cont
-        </Button>
+        <AccountMenu />
       </div>
     </header>
   )

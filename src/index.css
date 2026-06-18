@@ -367,4 +367,8 @@ html.signature-light .desk-wood {
     width: 100%;
     height: auto;
   }
+  /* fără bara de derulare orizontală a containerului în PDF (continuu) */
+  body.printing .score-sheet .overflow-x-auto {
+    overflow: visible !important;
+  }
 }
