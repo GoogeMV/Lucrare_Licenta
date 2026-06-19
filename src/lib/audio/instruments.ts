@@ -74,10 +74,17 @@ export interface InstrumentSound {
     velocity?: number,
   ): unknown
   releaseAll(): unknown
+  /** Distruge instrumentul — taie TOT sunetul (inclusiv notele deja programate);
+   *  `releaseAll` nu ajunge, fiindcă Tone golește lista de surse la programare */
+  dispose(): unknown
 }
 
 // cache per familie (Vioară + Violă împart aceleași eșantioane de vioară)
 const soundCache = new Map<string, Promise<InstrumentSound>>()
+// cache de BUFFERE decodate per familie — încărcate o singură dată de pe CDN și
+// reutilizate atât de sunetul partajat (audiție) cât și de instrumentele de unică
+// folosință ale redării; astfel, după prima încărcare, construirea e instantanee
+const bufferCache = new Map<string, Promise<Record<string, AudioBuffer>>>()
 
 function createFallbackSynth(): InstrumentSound {
   const synth = new Tone.PolySynth(Tone.Synth).toDestination()
@@ -106,50 +113,119 @@ function createChoirSynth(): InstrumentSound {
   return synth
 }
 
-function loadSampler(family: string): Promise<InstrumentSound> {
+/**
+ * Încarcă (o singură dată, apoi din cache) bufferele decodate ale unei familii.
+ * Le păstrăm ca `AudioBuffer` brute, ca să putem construi oricâte instrumente
+ * noi din ele fără a reîncărca de pe CDN — disposal-ul unui Sampler distruge
+ * doar învelișurile `ToneAudioBuffer`, nu bufferele brute din acest cache.
+ */
+function loadBuffers(family: string): Promise<Record<string, AudioBuffer>> {
+  let cached = bufferCache.get(family)
+  if (!cached) {
+    const urls = SAMPLE_SETS[family]
+    cached = new Promise<Record<string, AudioBuffer>>((resolve, reject) => {
+      const out: Record<string, AudioBuffer> = {}
+      const entries = Object.entries(urls)
+      let remaining = entries.length
+      const timer = window.setTimeout(
+        () => reject(new Error(`timeout la încărcarea eșantioanelor "${family}"`)),
+        LOAD_TIMEOUT_MS,
+      )
+      entries.forEach(([note, file]) => {
+        new Tone.ToneAudioBuffer(
+          `${SAMPLE_BASE_URL}/${family}/${file}`,
+          (buf) => {
+            out[note] = buf.get() as AudioBuffer
+            remaining -= 1
+            if (remaining === 0) {
+              window.clearTimeout(timer)
+              resolve(out)
+            }
+          },
+          (error) => {
+            window.clearTimeout(timer)
+            reject(error)
+          },
+        )
+      })
+    })
+    bufferCache.set(family, cached)
+  }
+  return cached
+}
+
+/** Construiește un Sampler NOU din bufferele din cache (sau un sintetizator). */
+function makeSampler(family: string): Promise<InstrumentSound> {
   if (family === "choir") return Promise.resolve(createChoirSynth())
-  const urls = SAMPLE_SETS[family]
-  if (!urls) return Promise.resolve(createFallbackSynth())
-
-  const load = new Promise<InstrumentSound>((resolve, reject) => {
-    const sampler = new Tone.Sampler({
-      urls,
-      baseUrl: `${SAMPLE_BASE_URL}/${family}/`,
-      release: 0.3,
-      onload: () => resolve(sampler),
-      onerror: (error) => reject(error),
-    }).toDestination()
+  if (!SAMPLE_SETS[family]) return Promise.resolve(createFallbackSynth())
+  return loadBuffers(family).then((buffers) => {
+    const sampler = new Tone.Sampler({ urls: buffers, release: 0.3 }).toDestination()
     sampler.volume.value = -4
+    return sampler
   })
-  const timeout = new Promise<never>((_, reject) => {
-    window.setTimeout(() => reject(new Error(`timeout la încărcarea eșantioanelor "${family}"`)), LOAD_TIMEOUT_MS)
-  })
-
-  return Promise.race([load, timeout])
 }
 
 /**
  * Construiește un sunet NOU pentru un instrument, în contextul audio curent și
  * FĂRĂ cache — necesar la randarea WAV offline (`Tone.Offline` rulează într-un
- * context separat, deci nu putem refolosi instanțele din cache-ul live).
+ * context separat, deci nu putem refolosi bufferele din cache-ul live).
  */
 export function createInstrument(instrument: string): Promise<InstrumentSound> {
-  return loadSampler(INSTRUMENT_SAMPLE_FAMILY[instrument] ?? "piano")
+  const family = INSTRUMENT_SAMPLE_FAMILY[instrument] ?? "piano"
+  if (family === "choir") return Promise.resolve(createChoirSynth())
+  const urls = SAMPLE_SETS[family]
+  if (!urls) return Promise.resolve(createFallbackSynth())
+  return new Promise<InstrumentSound>((resolve, reject) => {
+    const timer = window.setTimeout(
+      () => reject(new Error(`timeout la încărcarea eșantioanelor "${family}"`)),
+      LOAD_TIMEOUT_MS,
+    )
+    const sampler = new Tone.Sampler({
+      urls,
+      baseUrl: `${SAMPLE_BASE_URL}/${family}/`,
+      release: 0.3,
+      onload: () => {
+        window.clearTimeout(timer)
+        resolve(sampler)
+      },
+      onerror: (error) => {
+        window.clearTimeout(timer)
+        reject(error)
+      },
+    }).toDestination()
+    sampler.volume.value = -4
+  })
 }
 
 /**
- * Sunetul pentru un instrument din paletă — eșantioane reale, cu cache pe
- * sesiune; la eșec (offline/CDN căzut) întoarce sintetizatorul generic.
+ * Sunetul PARTAJAT pentru un instrument — cu cache pe sesiune; folosit de
+ * audiție (preview scurt la editare), unde nu e nevoie de oprire bruscă.
+ * La eșec (offline/CDN căzut) întoarce sintetizatorul generic.
  */
 export function getInstrumentSound(instrument: string): Promise<InstrumentSound> {
   const family = INSTRUMENT_SAMPLE_FAMILY[instrument] ?? "piano"
   let cached = soundCache.get(family)
   if (!cached) {
-    cached = loadSampler(family).catch((error) => {
+    cached = makeSampler(family).catch((error) => {
       console.warn(`Eșantioanele pentru "${family}" nu s-au încărcat — folosim sintetizatorul generic.`, error)
       return createFallbackSynth()
     })
     soundCache.set(family, cached)
   }
   return cached
+}
+
+/**
+ * Sunet de UNICĂ FOLOSINȚĂ pentru redare — construit din bufferele din cache
+ * (instant după prima încărcare). Spre deosebire de cel partajat, player-ul îl
+ * DISTRUGE la Stop/Pauză: doar `dispose()` taie notele deja programate pe ceasul
+ * audio (Tone golește lista de surse active la programare, deci `releaseAll` nu
+ * le mai prinde).
+ */
+export function createPlaybackSound(instrument: string): Promise<InstrumentSound> {
+  const family = INSTRUMENT_SAMPLE_FAMILY[instrument] ?? "piano"
+  return makeSampler(family).catch((error) => {
+    console.warn(`Eșantioanele pentru "${family}" nu s-au încărcat — folosim sintetizatorul generic.`, error)
+    return createFallbackSynth()
+  })
 }

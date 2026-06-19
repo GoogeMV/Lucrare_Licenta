@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
-import { Play, Square, RotateCcw, Loader2, SlidersHorizontal, Volume2, VolumeX } from "lucide-react"
+import { Play, Pause, RotateCcw, Loader2, SlidersHorizontal, Volume2, VolumeX } from "lucide-react"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { playbackQuarterBpm } from "@/lib/notation/duration"
 import { Metronome } from "@/lib/audio/metronome"
@@ -81,7 +81,8 @@ export function TransportBar() {
 
   function togglePlay() {
     if (isPlaying) {
-      player.stop()
+      // pauză: reține poziția; un Play ulterior reia de acolo (reset = stop+derulare)
+      player.pause()
       emitPlaybackHighlight(null)
       setIsPlaying(false)
       return
@@ -104,6 +105,8 @@ export function TransportBar() {
     // evidențiem portativul activ dacă e printre cele redate, altfel primul redat
     const activeAmongPlayed = played.findIndex((s) => s.id === activeStaffId)
     const highlightPartIndex = activeAmongPlayed >= 0 ? activeAmongPlayed : 0
+    // dacă eram pe pauză, reluăm din punctul reținut (altfel de la 0)
+    const startOffset = player.resumeOffset
     // play() se rezolvă după programarea notelor (include descărcarea eșantioanelor)
     setIsPreparing(true)
     void player
@@ -111,6 +114,7 @@ export function TransportBar() {
         metronome: metronomeOn,
         timeSignature,
         highlightPartIndex,
+        startOffset,
         onNote: (id, durationSeconds) => emitPlaybackHighlight(id, durationSeconds),
         onEnd: () => {
           emitPlaybackHighlight(null)
@@ -136,12 +140,12 @@ export function TransportBar() {
           variant={isPlaying ? "default" : "outline"}
           size="icon"
           onClick={togglePlay}
-          aria-label={isPlaying ? "Stop" : "Play"}
+          aria-label={isPlaying ? "Pauză" : player.isPaused ? "Reia" : "Play"}
         >
           {isPreparing ? (
             <Loader2 className="size-4 animate-spin" />
           ) : isPlaying ? (
-            <Square className="size-4" />
+            <Pause className="size-4" />
           ) : (
             <Play className="size-4" />
           )}

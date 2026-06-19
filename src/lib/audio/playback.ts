@@ -6,7 +6,7 @@ import { keyAccidentalMap } from "@/lib/notation/keySignature"
 import { beatSeconds } from "@/lib/notation/timeSignature"
 import { DEFAULT_VELOCITY, DYNAMIC_VELOCITY } from "@/lib/notation/dynamics"
 import { CLICK_BEAT, CLICK_DOWNBEAT, CLICK_DURATION } from "@/lib/audio/metronome"
-import { getInstrumentSound, type InstrumentSound } from "@/lib/audio/instruments"
+import { createPlaybackSound, type InstrumentSound } from "@/lib/audio/instruments"
 
 const DEFAULT_TIME_SIGNATURE: TimeSignature = { numerator: 4, denominator: 4 }
 
@@ -33,6 +33,8 @@ export interface PlaybackOptions {
   timeSignature?: TimeSignature
   /** Indexul portativului a cărui notă curentă e evidențiată (implicit 0) */
   highlightPartIndex?: number
+  /** Secunde de la începutul piesei de la care pornește redarea (reluare după pauză) */
+  startOffset?: number
 }
 
 // mic avans înainte de prima notă, ca toate evenimentele audio să fie programate
@@ -55,9 +57,25 @@ export class ScorePlayer {
   private playing = false
   /** crește la fiecare play/stop — invalidează redările rămase în încărcare */
   private session = 0
+  /** timpul AudioContext la care a pornit redarea curentă (pentru calculul pauzei) */
+  private startTime = 0
+  /** offset-ul (secunde de la începutul piesei) de la care a pornit redarea curentă */
+  private currentStartOffset = 0
+  /** dacă redarea e pe pauză: offset-ul (secunde de la început) unde s-a oprit */
+  private pausedOffset: number | null = null
 
   get isPlaying() {
     return this.playing
+  }
+
+  /** adevărat dacă redarea e pe pauză (oprită, dar cu poziție reținută) */
+  get isPaused() {
+    return this.pausedOffset != null
+  }
+
+  /** offset-ul (secunde de la început) de unde va relua un play() ulterior, sau 0 */
+  get resumeOffset() {
+    return this.pausedOffset ?? 0
   }
 
   /**
@@ -80,10 +98,12 @@ export class ScorePlayer {
       return
     }
 
-    // sunetele instrumentelor (prima dată descarcă eșantioanele; apoi, din cache)
-    const sounds = await Promise.all(parts.map((part) => getInstrumentSound(part.instrument)))
+    // sunete de unică folosință (prima dată descarcă eșantioanele; apoi din
+    // cache-ul de buffere) — le distrugem la oprire ca să tăiem tot sunetul
+    const sounds = await Promise.all(parts.map((part) => createPlaybackSound(part.instrument)))
     // dacă între timp s-a apăsat Stop sau alt Play, redarea asta nu mai pornește
     if (session !== this.session) {
+      sounds.forEach((sound) => sound.dispose())
       options.onEnd?.()
       return
     }
@@ -95,6 +115,10 @@ export class ScorePlayer {
     const secondsPerBeat = 60 / bpm // durata unei pătrimi (tempo în ♩)
     const startTime = Tone.now() + LEAD_SECONDS
     const highlightIndex = options.highlightPartIndex ?? 0
+    // punctul de pornire în piesă (>0 la reluarea după pauză)
+    const startOffset = options.startOffset ?? 0
+    this.startTime = startTime
+    this.currentStartOffset = startOffset
 
     let maxOffset = 0 // durata celui mai lung portativ (decide finalul redării)
 
@@ -111,34 +135,47 @@ export class ScorePlayer {
       let velocity = DEFAULT_VELOCITY
       for (const entry of part.notes) {
         const durationSeconds = entryBeats(entry) * secondsPerBeat
+        // nuanța în vigoare se actualizează ÎNAINTE de eventuala sărire, ca
+        // reluarea după pauză să pornească cu velocitatea corectă
         if (entry.dynamic) velocity = DYNAMIC_VELOCITY[entry.dynamic]
+        const noteEnd = offset + durationSeconds
 
-        if (entry.type === "note" && !staffMuted) {
-          // toate înălțimile intrării (acord) — fără alterație explicită,
-          // fiecare sună conform armurii (ex. Fa → Fa♯ în Sol major)
-          const toneNotes = entry.pitches.map((pitch) =>
-            pitchToToneNote({ ...pitch, accidental: pitch.accidental ?? keyMap[pitch.step] }),
-          )
-          // staccato scurtează nota redată; restul notelor sună ~90% din durată
-          const isStaccato = entry.articulations?.includes("staccato")
-          const sounded = durationSeconds * (isStaccato ? 0.4 : 0.9)
-          sound.triggerAttackRelease(toneNotes, sounded, startTime + offset, velocity * staffVolume)
+        // la reluare după pauză, sărim notele deja redate complet
+        if (noteEnd > startOffset) {
+          // decalajul față de punctul de reluare: pozitiv pentru notele viitoare,
+          // 0 pentru nota aflată în curs de redare când s-a apăsat pauză
+          const localStart = Math.max(0, offset - startOffset)
+          // cât din notă s-a scurs deja (>0 doar pentru nota tăiată de pauză)
+          const elapsedInNote = Math.max(0, startOffset - offset)
+
+          if (entry.type === "note" && !staffMuted) {
+            // toate înălțimile intrării (acord) — fără alterație explicită,
+            // fiecare sună conform armurii (ex. Fa → Fa♯ în Sol major)
+            const toneNotes = entry.pitches.map((pitch) =>
+              pitchToToneNote({ ...pitch, accidental: pitch.accidental ?? keyMap[pitch.step] }),
+            )
+            // staccato scurtează nota redată; restul notelor sună ~90% din durată
+            const isStaccato = entry.articulations?.includes("staccato")
+            const sounded = durationSeconds * (isStaccato ? 0.4 : 0.9) - elapsedInNote
+            if (sounded > 0.01)
+              sound.triggerAttackRelease(toneNotes, sounded, startTime + localStart, velocity * staffVolume)
+          }
+
+          // evidențiem nota curentă doar pentru portativul urmărit
+          if (partIndex === highlightIndex) {
+            const id = entry.id
+            const noteSeconds = durationSeconds - elapsedInNote
+            const timer = window.setTimeout(
+              () => {
+                if (this.playing) options.onNote?.(id, noteSeconds)
+              },
+              (localStart + LEAD_SECONDS) * 1000,
+            )
+            this.timers.push(timer)
+          }
         }
 
-        // evidențiem nota curentă doar pentru portativul urmărit
-        if (partIndex === highlightIndex) {
-          const id = entry.id
-          const noteSeconds = durationSeconds
-          const timer = window.setTimeout(
-            () => {
-              if (this.playing) options.onNote?.(id, noteSeconds)
-            },
-            (offset + LEAD_SECONDS) * 1000,
-          )
-          this.timers.push(timer)
-        }
-
-        offset += durationSeconds
+        offset = noteEnd
       }
       maxOffset = Math.max(maxOffset, offset)
     })
@@ -151,11 +188,14 @@ export class ScorePlayer {
       const beatUnitSeconds = beatSeconds(timeSignature, bpm)
       const totalBeats = Math.ceil(maxOffset / beatUnitSeconds)
       for (let beat = 0; beat < totalBeats; beat++) {
+        const beatTime = beat * beatUnitSeconds
+        // la reluare după pauză, sărim clicurile deja consumate
+        if (beatTime < startOffset - 1e-6) continue
         const isDownbeat = beat % timeSignature.numerator === 0
         this.clickSynth.triggerAttackRelease(
           isDownbeat ? CLICK_DOWNBEAT : CLICK_BEAT,
           CLICK_DURATION,
-          startTime + beat * beatUnitSeconds,
+          startTime + (beatTime - startOffset),
         )
       }
     }
@@ -169,22 +209,41 @@ export class ScorePlayer {
         }
         this.releaseSounds()
       },
-      (maxOffset + LEAD_SECONDS) * 1000 + 150,
+      (maxOffset - startOffset + LEAD_SECONDS) * 1000 + 150,
     )
     this.timers.push(endTimer)
+  }
+
+  /**
+   * Pune redarea pe pauză, reținând poziția curentă în piesă, astfel încât un
+   * `play()` ulterior cu `startOffset = resumeOffset` să continue de acolo.
+   * Spre deosebire de `stop()`, NU șterge poziția reținută.
+   */
+  pause() {
+    if (!this.playing) return
+    // timpul scurs din piesă = (acum − startul redării curente) + offsetul de pornire
+    const elapsed = Tone.now() - this.startTime + this.currentStartOffset
+    this.session += 1
+    this.playing = false
+    this.timers.forEach((t) => window.clearTimeout(t))
+    this.timers = []
+    this.releaseSounds()
+    this.pausedOffset = Math.max(0, elapsed)
   }
 
   stop() {
     this.session += 1
     this.playing = false
+    this.pausedOffset = null
     this.timers.forEach((t) => window.clearTimeout(t))
     this.timers = []
     this.releaseSounds()
   }
 
   private releaseSounds() {
-    // sunetele instrumentelor sunt în cache pe sesiune — doar le oprim, nu le distrugem
-    this.activeSounds.forEach((sound) => sound.releaseAll())
+    // sunetele redării sunt de unică folosință — le DISTRUGEM, ca să tăiem inclusiv
+    // notele deja programate pe ceasul audio (releaseAll nu le-ar mai prinde)
+    this.activeSounds.forEach((sound) => sound.dispose())
     this.activeSounds = []
     if (this.clickSynth) {
       this.clickSynth.dispose()

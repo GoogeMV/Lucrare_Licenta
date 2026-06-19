@@ -121,7 +121,10 @@ const STEP_PX = 6 // pixeli per treaptă diatonică (pentru spațierea dinamică
 const LEDGER_SLACK = 30 // câte linii suplimentare „încap" în spațiul de bază înainte să mărim
 const TOP_MARGIN = 36
 const BOTTOM_MARGIN = 30
-const LYRIC_OFFSET = 20 // distanța (px) sub linia de jos a portativului pentru versuri
+const LYRIC_OFFSET = 30 // distanța (px) sub linia de jos a portativului pentru versuri
+const LYRIC_CLEARANCE = 18 // spațiu minim sub cea mai joasă notă cu vers (anti-suprapunere)
+// font caligrafic clasic pentru versuri (slant inclus); cade pe cursive generic
+const LYRIC_FONT = "'Monotype Corsiva', 'Apple Chancery', 'Snell Roundhand', cursive"
 
 /** Găsește cel mai apropiat strămoș care derulează (overflow-y auto/scroll) */
 function findScrollParent(el: HTMLElement | null): HTMLElement | null {
@@ -222,6 +225,9 @@ export function InteractiveStave() {
   // linia de jos a fiecărui portativ (în coordonate SVG), pe „staffId:systemIndex"
   // — folosită ca să așezăm input-ul de versuri exact unde se desenează silaba
   const rowBottomRef = useRef<Map<string, number>>(new Map())
+  // linia (Y) pe care stau versurile, per `staffId:systemIndex` — sub portativ,
+  // dar coborâtă dacă o notă cu vers e jos (linii suplimentare), ca să nu se atingă
+  const lyricBaselineRef = useRef<Map<string, number>>(new Map())
   // elementele SVG ale notelor randate, pe id — folosite de evidențierea din
   // timpul redării ca să recoloreze direct nota curentă, fără re-randare React
   const svgNoteElsRef = useRef<Map<string, SVGElement>>(new Map())
@@ -752,47 +758,59 @@ export function InteractiveStave() {
       const rowBottom = new Map<string, number>()
       rows.forEach((r) => rowBottom.set(`${r.staffId}:${r.systemIndex}`, r.bottomY))
       rowBottomRef.current = rowBottom // pentru poziționarea input-ului de versuri
+      // nuanțele și versurile se desenează prin `context.fillText` (ca eticheta
+      // instrumentului), NU ca <text> SVG adăugat manual cu appendChild: VexFlow 5
+      // injectează o regulă CSS pe `svg text` care învinge `style.fill` inline, deci
+      // textul adăugat manual ieșea NEGRU pe foaie. Calea VexFlow respectă culoarea.
       renderedNotes.forEach(({ id, staffId, staveNote, systemIndex, firstOfNote }) => {
         if (!firstOfNote) return
         const entry = staves.find((s) => s.id === staffId)?.notes.find((n) => n.id === id)
         if (!entry?.dynamic) return
         const bottomY = rowBottom.get(`${staffId}:${systemIndex}`)
         if (bottomY === undefined) return
-        const text = document.createElementNS(SVG_NS, "text")
-        text.setAttribute("x", String(staveNote.getAbsoluteX() - 2))
-        text.setAttribute("y", String(bottomY + 30))
-        text.setAttribute("font-family", "Georgia, serif")
-        text.setAttribute("font-style", "italic")
-        text.setAttribute("font-weight", "bold")
-        text.setAttribute("font-size", "13")
-        // culoarea prin stil inline (prioritate maximă) — ca atributul `fill` să
-        // nu fie suprascris de stiluri moștenite și textul să iasă crem/auriu
-        text.style.fill = selectedIdSet.has(id) ? ACCENT_COLOR : INK_COLOR
-        text.setAttribute("pointer-events", "none")
-        text.textContent = entry.dynamic
-        svgEl.appendChild(text)
+        context.setFont("Georgia, serif", 13, "bold", "italic")
+        context.setFillStyle(selectedIdSet.has(id) ? ACCENT_COLOR : INK_COLOR)
+        context.fillText(entry.dynamic, staveNote.getAbsoluteX() - 2, bottomY + 30)
       })
 
-      // versurile: silaba centrată sub nota ei (sub nuanțe). Nota aflată acum în
-      // editare nu se desenează — în locul ei plutește input-ul HTML.
+      // linia versurilor: o singură linie orizontală per portativ/sistem, așezată
+      // sub cea mai joasă notă CU vers (capul cel mai de jos). Așa, când o notă cu
+      // vers e coborâtă pe linii suplimentare, întreaga linie de versuri coboară cu
+      // ea și nu se mai suprapun — versul rămâne „legat" de notă pe verticală.
+      const lyricBaseline = new Map<string, number>()
+      renderedNotes.forEach(({ id, staffId, staveNote, systemIndex, firstOfNote, isRest }) => {
+        if (!firstOfNote || isRest) return
+        const entry = staves.find((s) => s.id === staffId)?.notes.find((n) => n.id === id)
+        if (!entry?.lyric) return
+        const key = `${staffId}:${systemIndex}`
+        const staffBottom = rowBottom.get(key)
+        if (staffBottom === undefined) return
+        const ys = staveNote.getYs()
+        const lowestHead = ys.length ? Math.max(...ys) : staffBottom
+        // sub portativ ȘI sub nota cea mai joasă (oricare e mai jos)
+        const candidate = Math.max(staffBottom + LYRIC_OFFSET, lowestHead + LYRIC_CLEARANCE)
+        const prev = lyricBaseline.get(key)
+        if (prev === undefined || candidate > prev) lyricBaseline.set(key, candidate)
+      })
+      lyricBaselineRef.current = lyricBaseline // pentru poziționarea input-ului
+
+      // versurile: silaba centrată sub nota ei, pe linia de versuri a sistemului.
+      // Nota aflată acum în editare nu se desenează — în loc plutește input-ul HTML.
+      context.setFont(LYRIC_FONT, 16)
       renderedNotes.forEach(({ id, staffId, staveNote, systemIndex, firstOfNote, isRest }) => {
         if (!firstOfNote || isRest) return
         if (lyricMode && selectedId === id) return // se editează acum (input deasupra)
         const entry = staves.find((s) => s.id === staffId)?.notes.find((n) => n.id === id)
         if (!entry?.lyric) return
-        const bottomY = rowBottom.get(`${staffId}:${systemIndex}`)
-        if (bottomY === undefined) return
-        const text = document.createElementNS(SVG_NS, "text")
-        text.setAttribute("x", String(staveNote.getAbsoluteX() + 5))
-        text.setAttribute("y", String(bottomY + LYRIC_OFFSET))
-        text.setAttribute("text-anchor", "middle")
-        text.setAttribute("font-family", "Georgia, serif")
-        text.setAttribute("font-size", "12")
-        text.style.fill = selectedIdSet.has(id) ? ACCENT_COLOR : INK_COLOR
-        text.setAttribute("pointer-events", "none")
-        text.textContent = entry.lyric
-        svgEl.appendChild(text)
+        const baselineY = lyricBaseline.get(`${staffId}:${systemIndex}`)
+        if (baselineY === undefined) return
+        context.setFillStyle(selectedIdSet.has(id) ? ACCENT_COLOR : INK_COLOR)
+        // fillText desenează aliniat la stânga; centrăm manual sub nota ei
+        const width = context.measureText(entry.lyric).width
+        context.fillText(entry.lyric, staveNote.getAbsoluteX() + 5 - width / 2, baselineY)
       })
+      // restaurăm culoarea de bază pentru desenele ulterioare
+      context.setFillStyle(INK_COLOR)
     }
 
     // după re-randare, vechile elemente SVG nu mai există — golim hărțile
@@ -825,9 +843,10 @@ export function InteractiveStave() {
     // cursorul propriu-zis: un dreptunghi subțire, invizibil până la redare
     if (svgEl) {
       const cursor = document.createElementNS(SVG_NS, "rect") as SVGRectElement
-      cursor.setAttribute("width", "2")
+      cursor.setAttribute("width", "4")
+      cursor.setAttribute("rx", "1.5")
       cursor.setAttribute("fill", ACCENT_COLOR)
-      cursor.setAttribute("opacity", "0.6")
+      cursor.setAttribute("opacity", "0.9")
       cursor.setAttribute("visibility", "hidden")
       cursor.setAttribute("pointer-events", "none")
       svgEl.appendChild(cursor)
@@ -1241,9 +1260,12 @@ export function InteractiveStave() {
       if (!svg || !wrap || !meta || !ctm) return
       // aceeași linie de bază ca silaba desenată (coordonate SVG), ca input-ul să
       // apară EXACT unde va fi textul; convertim în coordonatele wrapper-ului
-      const bottomY = rowBottomRef.current.get(`${staff.id}:${meta.systemIndex}`)
-      if (bottomY === undefined) return
-      const pt = new DOMPoint(meta.x + 5, bottomY + LYRIC_OFFSET).matrixTransform(ctm)
+      const key = `${staff.id}:${meta.systemIndex}`
+      const staffBottom = rowBottomRef.current.get(key)
+      if (staffBottom === undefined) return
+      // linia versurilor sistemului (sub notele joase), cu cădere pe linia simplă
+      const baselineY = lyricBaselineRef.current.get(key) ?? staffBottom + LYRIC_OFFSET
+      const pt = new DOMPoint(meta.x + 5, baselineY).matrixTransform(ctm)
       const w = wrap.getBoundingClientRect()
       // input-ul are translateX(-50%); ridicăm puțin (top) ca textul să cadă pe linie
       setLyricPos({ left: pt.x - w.left, top: pt.y - w.top - 11 })
@@ -1763,9 +1785,16 @@ export function InteractiveStave() {
                 setLyricMode(false)
               }
             }}
-            className="absolute z-10 w-24 -translate-x-1/2 rounded-sm border border-primary bg-surface px-1 py-0.5 text-center text-xs outline-none"
+            className="absolute z-10 w-24 -translate-x-1/2 rounded-sm border border-primary bg-surface px-1 py-0.5 text-center outline-none"
             // nota editată e cea selectată -> text auriu, ca pe foaie (vezi randarea SVG)
-            style={{ left: lyricPos.left, top: lyricPos.top, color: "var(--ink-accent)", caretColor: "var(--ink-accent)" }}
+            style={{
+              left: lyricPos.left,
+              top: lyricPos.top,
+              color: "var(--ink-accent)",
+              caretColor: "var(--ink-accent)",
+              fontFamily: LYRIC_FONT,
+              fontSize: "16px",
+            }}
             placeholder="versuri…"
           />
         )}

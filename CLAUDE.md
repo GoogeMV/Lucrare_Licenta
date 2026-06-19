@@ -10,9 +10,17 @@ completitudinea. UI-ul și comentariile sunt în **română** — păstrează co
 npm run dev      # Vite dev server pe http://localhost:5173
 npm run build    # tsc -b && vite build (type-check + bundle)
 npm run lint     # eslint . (țintă: 0 erori)
+npm test         # vitest run — teste unitare pe modulele pure + reducer
 ```
 
-Nu există teste automate. Verificarea = build verde + testare manuală în browser.
+Verificare = build verde + `npm test` + testare manuală în browser. Testele
+(Vitest) acoperă `lib/notation/*`, exportul MusicXML și `scoreReducer` (logică
+pură); UI-ul și randarea VexFlow se verifică manual.
+
+**Backend opțional** (cont + partituri în cloud): `server/` — Node/Express +
+PostgreSQL (`pg`). Rulare: `cd server && npm install && npm run dev` (vezi
+`server/README.md`); frontend-ul proxează `/api` → :4000. Tot stack-ul în
+containere: `docker compose up --build` (Postgres + server + web pe :8080).
 
 ## Stack
 
