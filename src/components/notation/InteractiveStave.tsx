@@ -1412,9 +1412,13 @@ export function InteractiveStave() {
       .join(",")}`
     if (key === auditionKeyRef.current) return
     auditionKeyRef.current = key
-    // fără amânare: audiția taie singură nota anterioară (dispose) și pornește
-    // imediat, deci ai feedback instant fără suprapunere la navigare rapidă
-    void auditionPitches(staff.instrument, staff.keySignature, pitches)
+    // nota sună pe durata ei reală la tempo-ul curent; când selectezi alta,
+    // audiția nouă o taie (dispose). Tempo-ul îl citim din ref ca să nu re-rulăm
+    // efectul (și să nu re-audiem) la mișcarea slider-ului de tempo.
+    const { meta } = selectionRef.current
+    const bpm = playbackQuarterBpm(meta.tempo, meta.tempoBeat, meta.tempoBeatDotted, 100)
+    const seconds = (entryBeats(entry) * 60) / bpm
+    void auditionPitches(staff.instrument, staff.keySignature, pitches, seconds)
   }, [selectedId, selectedPitchIndex, staves])
 
   // navigare/editare din tastatură (vezi indicațiile de sub portativ)

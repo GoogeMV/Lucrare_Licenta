@@ -4,10 +4,13 @@ import { pitchToToneNote } from "@/lib/notation/pitch"
 import { keyAccidentalMap } from "@/lib/notation/keySignature"
 import { createPlaybackSound, type InstrumentSound } from "@/lib/audio/instruments"
 
-// preview scurt și constant la selectare (ca în MuseScore) — doar pentru a auzi
-// înălțimea; durata reală se aude la redare
-const DEFAULT_AUDITION_SECONDS = 0.4
-const MAX_AUDITION_SECONDS = 3
+// audiția: nota selectată sună pe DURATA EI reală (ca în MuseScore); când treci
+// pe altă notă, sunetul curent e tăiat și pornește cel nou. `seconds` = durata
+// notei la tempo-ul curent; lipsă = un preview scurt implicit.
+const DEFAULT_AUDITION_SECONDS = 0.5
+const MAX_AUDITION_SECONDS = 4
+// coada de release a sampler-ului — o adăugăm la curățarea automată
+const RELEASE_TAIL_SECONDS = 0.3
 
 // vocea de audiție curentă: o ținem ca să o putem TĂIA (dispose) când selectezi
 // alta — `releaseAll` n-ar funcționa (Tone golește lista de surse la programare,
@@ -30,12 +33,11 @@ function cutAudition() {
 }
 
 /**
- * Audiția la editare (ca în MuseScore): redă scurt înălțimile date cu timbrul
+ * Audiția la editare (ca în MuseScore): redă înălțimile date cu timbrul
  * instrumentului — la selectarea unei note, la transpunere, la alterații etc.
- * Fiecare audiție TAIE instantaneu nota anterioară (dispose), deci nu mai e nevoie
- * de amânare: feedback imediat, fără suprapunere la navigare rapidă.
- * `seconds` reflectă durata notei; lipsă = durata implicită scurtă.
- * Best-effort: dacă sunetul nu se încarcă sau audio-ul e blocat, tăcem.
+ * Nota selectată sună pe durata ei reală (`seconds`); când selectezi alta, audiția
+ * nouă TAIE instantaneu nota anterioară (dispose), deci fără amânare și fără
+ * suprapunere. Best-effort: dacă sunetul nu se încarcă sau audio-ul e blocat, tăcem.
  */
 export async function auditionPitches(
   instrument: string,
@@ -62,10 +64,11 @@ export async function auditionPitches(
     )
     sound.triggerAttackRelease(notes, duration)
     currentSound = sound
-    // auto-disposal după ce nota s-a stins (durată + coadă scurtă de release)
+    // curățare după ce nota s-a stins natural (durata ei + coada de release);
+    // dacă selectezi alta înainte, cutAudition() o oprește oricum mai devreme
     disposeTimer = window.setTimeout(() => {
       if (gen === generation) cutAudition()
-    }, (duration + 0.3) * 1000)
+    }, (duration + RELEASE_TAIL_SECONDS) * 1000)
   } catch {
     // audiția nu trebuie să strice niciodată editarea
   }
