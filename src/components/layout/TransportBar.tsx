@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
+import { NoteValueIcon } from "@/components/notation/NoteValueIcon"
 import { Play, Pause, RotateCcw, Loader2, SlidersHorizontal, Volume2, VolumeX } from "lucide-react"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { playbackQuarterBpm } from "@/lib/notation/duration"
@@ -22,8 +23,7 @@ export function TransportBar() {
     selectedStaffIds,
     timeSignature,
     meta,
-    playbackRate,
-    setPlaybackRate,
+    setMeta,
     mixer,
     setStaffVolume,
     toggleStaffMute,
@@ -37,10 +37,10 @@ export function TransportBar() {
   // adevărat cât timp se descarcă eșantioanele instrumentelor (doar primul Play)
   const [isPreparing, setIsPreparing] = useState(false)
   const [metronomeOn, setMetronomeOn] = useState(false)
-  // BPM-ul efectiv în pătrimi: indicația notată (unitate de bătaie × număr) ajustată
-  // cu viteza de redare. Tempo-ul notat e al piesei (în meta); viteza de redare e
-  // un reglaj separat „pe parcurs", care nu schimbă indicația de pe foaie.
-  const playbackBpm = playbackQuarterBpm(meta.tempo, meta.tempoBeat, meta.tempoBeatDotted, playbackRate)
+  // BPM-ul efectiv în pătrimi: indicația notată (unitate de bătaie × număr). Bara
+  // de jos editează DIRECT același tempo (meta.tempo) ca indicația de pe foaie —
+  // o singură valoare: ce se aude = ce se printează/exportă.
+  const playbackBpm = playbackQuarterBpm(meta.tempo, meta.tempoBeat, meta.tempoBeatDotted, 100)
 
   // player-ul e partajat (în context, folosit și de Space); metronomul e local
   const metronomeRef = useRef<Metronome | null>(null)
@@ -161,17 +161,21 @@ export function TransportBar() {
       </div>
 
       <div className="flex flex-1 items-center justify-center gap-3">
-        <span className="text-xs text-foreground-muted">Viteză redare</span>
+        <span className="flex items-center gap-1 text-xs text-foreground-muted">
+          Tempo
+          <NoteValueIcon duration={meta.tempoBeat} dotted={meta.tempoBeatDotted} className="text-sm text-foreground" />
+          <span className="text-foreground">=</span>
+        </span>
         <Slider
-          label="Viteză redare"
+          label="Tempo (BPM)"
           className="w-40"
-          min={50}
-          max={200}
-          step={5}
-          value={[playbackRate]}
-          onValueChange={(v) => setPlaybackRate(Array.isArray(v) ? v[0] : v)}
+          min={30}
+          max={300}
+          step={1}
+          value={[meta.tempo]}
+          onValueChange={(v) => setMeta({ tempo: Array.isArray(v) ? v[0] : v })}
         />
-        <span className="w-10 text-xs tabular-nums text-foreground-muted">{playbackRate}%</span>
+        <span className="w-14 text-xs tabular-nums text-foreground-muted">{meta.tempo} BPM</span>
       </div>
 
       <div className="flex items-center gap-2">

@@ -122,9 +122,11 @@ const LEDGER_SLACK = 30 // câte linii suplimentare „încap" în spațiul de b
 const TOP_MARGIN = 36
 const BOTTOM_MARGIN = 30
 const LYRIC_OFFSET = 30 // distanța (px) sub linia de jos a portativului pentru versuri
-const LYRIC_CLEARANCE = 18 // spațiu minim sub cea mai joasă notă cu vers (anti-suprapunere)
-// font caligrafic clasic pentru versuri (slant inclus); cade pe cursive generic
-const LYRIC_FONT = "'Monotype Corsiva', 'Apple Chancery', 'Snell Roundhand', cursive"
+const LYRIC_CLEARANCE = 28 // spațiu sub cea mai joasă notă cu vers; ≈OFFSET => versul
+// începe să coboare imediat ce nota trece sub portativ (nu doar când e mult sub el)
+// fontul de text al partiturii (Edwin, ca în MuseScore) — versurile se desenează
+// italic, ca în partiturile gravate clasic
+const SHEET_FONT = "'Edwin', serif"
 
 /** Găsește cel mai apropiat strămoș care derulează (overflow-y auto/scroll) */
 function findScrollParent(el: HTMLElement | null): HTMLElement | null {
@@ -184,7 +186,6 @@ export function InteractiveStave() {
     selectedDuration,
     viewMode,
     meta,
-    playbackRate,
     mixer,
     theme,
     player,
@@ -216,11 +217,10 @@ export function InteractiveStave() {
     selectedStaffIds: string[]
     activeStaffId: string
     meta: typeof meta
-    playbackRate: number
-  }>({ staves, selectedIds, selectedId, selectedStaffIds, activeStaffId, meta, playbackRate })
+  }>({ staves, selectedIds, selectedId, selectedStaffIds, activeStaffId, meta })
   useEffect(() => {
-    selectionRef.current = { staves, selectedIds, selectedId, selectedStaffIds, activeStaffId, meta, playbackRate }
-  }, [staves, selectedIds, selectedId, selectedStaffIds, activeStaffId, meta, playbackRate])
+    selectionRef.current = { staves, selectedIds, selectedId, selectedStaffIds, activeStaffId, meta }
+  }, [staves, selectedIds, selectedId, selectedStaffIds, activeStaffId, meta])
 
   // linia de jos a fiecărui portativ (în coordonate SVG), pe „staffId:systemIndex"
   // — folosită ca să așezăm input-ul de versuri exact unde se desenează silaba
@@ -363,7 +363,7 @@ export function InteractiveStave() {
     const renderer = new Renderer(container, Renderer.Backends.SVG)
     renderer.resize(width, height)
     const context = renderer.getContext()
-    context.setFont("Georgia, serif", 10)
+    context.setFont(SHEET_FONT, 10)
 
     const svgEl = container.querySelector<SVGSVGElement>("svg")
     if (svgEl) {
@@ -674,7 +674,7 @@ export function InteractiveStave() {
             const groupInPlayback = members.some((j) => selectedStaffIds.includes(staves[j].id))
             // resetăm fontul: desenarea trioletului („3") lasă contextul cu alt
             // font, iar eticheta ar moșteni dimensiunea aceea (devenea gigantică)
-            context.setFont("Georgia, serif", 10)
+            context.setFont(SHEET_FONT, 10)
             context.setFillStyle(groupActive || groupInPlayback ? ACCENT_COLOR : INK_COLOR)
             context.fillText(instrumentLabel(staff.instrument), LEFT_MARGIN, (firstY + lastY) / 2 + 26)
             context.setFillStyle(INK_COLOR)
@@ -768,7 +768,7 @@ export function InteractiveStave() {
         if (!entry?.dynamic) return
         const bottomY = rowBottom.get(`${staffId}:${systemIndex}`)
         if (bottomY === undefined) return
-        context.setFont("Georgia, serif", 13, "bold", "italic")
+        context.setFont(SHEET_FONT, 13, "bold", "italic")
         context.setFillStyle(selectedIdSet.has(id) ? ACCENT_COLOR : INK_COLOR)
         context.fillText(entry.dynamic, staveNote.getAbsoluteX() - 2, bottomY + 30)
       })
@@ -796,7 +796,7 @@ export function InteractiveStave() {
 
       // versurile: silaba centrată sub nota ei, pe linia de versuri a sistemului.
       // Nota aflată acum în editare nu se desenează — în loc plutește input-ul HTML.
-      context.setFont(LYRIC_FONT, 16)
+      context.setFont(SHEET_FONT, 15, "normal", "italic")
       renderedNotes.forEach(({ id, staffId, staveNote, systemIndex, firstOfNote, isRest }) => {
         if (!firstOfNote || isRest) return
         if (lyricMode && selectedId === id) return // se editează acum (input deasupra)
@@ -1395,13 +1395,11 @@ export function InteractiveStave() {
   // Cheia de deduplicare evită re-redarea la modificări neauzibile (durată etc.);
   // în timpul redării selecția e goală, deci audiția tace de la sine.
   const auditionKeyRef = useRef("")
-  const auditionTimerRef = useRef<number | null>(null)
   useEffect(() => {
     const staff = staves.find((s) => s.notes.some((n) => n.id === selectedId))
     const entry = staff?.notes.find((n) => n.id === selectedId)
     if (!staff || !entry || entry.type !== "note") {
-      // nimic de audiat (deselectat / pauză) — anulăm audiția programată
-      if (auditionTimerRef.current !== null) window.clearTimeout(auditionTimerRef.current)
+      // nimic de audiat (deselectat / pauză)
       auditionKeyRef.current = selectedId ?? ""
       return
     }
@@ -1414,15 +1412,9 @@ export function InteractiveStave() {
       .join(",")}`
     if (key === auditionKeyRef.current) return
     auditionKeyRef.current = key
-    // amânare scurtă (debounce): la navigare/scroll rapid prin note, cele
-    // intermediare NU se aud — sună doar nota pe care te oprești (preview scurt fix)
-    if (auditionTimerRef.current !== null) window.clearTimeout(auditionTimerRef.current)
-    auditionTimerRef.current = window.setTimeout(() => {
-      void auditionPitches(staff.instrument, staff.keySignature, pitches)
-    }, 70)
-    return () => {
-      if (auditionTimerRef.current !== null) window.clearTimeout(auditionTimerRef.current)
-    }
+    // fără amânare: audiția taie singură nota anterioară (dispose) și pornește
+    // imediat, deci ai feedback instant fără suprapunere la navigare rapidă
+    void auditionPitches(staff.instrument, staff.keySignature, pitches)
   }, [selectedId, selectedPitchIndex, staves])
 
   // navigare/editare din tastatură (vezi indicațiile de sub portativ)
@@ -1503,7 +1495,7 @@ export function InteractiveStave() {
           return
         }
         // citim selecția DIRECT (nu din ref) ca să fie mereu la zi
-        const bpm = playbackQuarterBpm(meta.tempo, meta.tempoBeat, meta.tempoBeatDotted, playbackRate)
+        const bpm = playbackQuarterBpm(meta.tempo, meta.tempoBeat, meta.tempoBeatDotted, 100)
         const noteIds = selectedIds.length ? selectedIds : selectedId ? [selectedId] : []
         let parts: { notes: NoteEntry[]; keySignature: string; instrument: string; volume: number; muted: boolean }[]
         let highlightPartIndex: number
@@ -1720,7 +1712,6 @@ export function InteractiveStave() {
     meta.tempo,
     meta.tempoBeat,
     meta.tempoBeatDotted,
-    playbackRate,
     player,
     setIsPlaying,
     dispatch,
@@ -1792,7 +1783,8 @@ export function InteractiveStave() {
               top: lyricPos.top,
               color: "var(--ink-accent)",
               caretColor: "var(--ink-accent)",
-              fontFamily: LYRIC_FONT,
+              fontFamily: SHEET_FONT,
+              fontStyle: "italic",
               fontSize: "16px",
             }}
             placeholder="versuri…"

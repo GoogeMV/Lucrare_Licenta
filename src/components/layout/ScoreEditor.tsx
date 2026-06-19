@@ -73,6 +73,16 @@ function TempoBeatPicker() {
 
 function SheetHeading() {
   const { meta, setMeta } = useScoreEditor()
+  // input-ul de tempo are stare proprie de TEXT, ca să poți tasta liber (inclusiv
+  // gol temporar sau zecimale) fără să sară: fără clamp și fără rotunjire — singura
+  // condiție e să fie un număr > 0 (altfel redarea ar împărți la zero)
+  const [tempoInput, setTempoInput] = useState(String(meta.tempo))
+  // resincronizăm dacă tempo-ul se schimbă din altă parte (încărcare/import
+  // partitură); funcția imbricată evită regula react-hooks/set-state-in-effect
+  useEffect(() => {
+    const sync = () => setTempoInput(String(meta.tempo))
+    sync()
+  }, [meta.tempo])
 
   return (
     <div className="mb-2 flex flex-col gap-1">
@@ -112,12 +122,20 @@ function SheetHeading() {
           <span>=</span>
           <input
             type="number"
-            min={40}
-            max={240}
-            value={meta.tempo}
+            min={1}
+            step="any"
+            value={tempoInput}
             onChange={(e) => {
+              setTempoInput(e.target.value)
               const value = Number(e.target.value)
-              if (Number.isFinite(value)) setMeta({ tempo: Math.max(40, Math.min(240, value)) })
+              // actualizăm tempo-ul doar pentru valori valide >0; gol/invalid rămâne
+              // doar în câmp până la blur (nu forțăm o valoare în timp ce tastezi)
+              if (Number.isFinite(value) && value > 0) setMeta({ tempo: value })
+            }}
+            onBlur={() => {
+              // dacă a rămas gol sau invalid, readucem afișajul la tempo-ul curent
+              const value = Number(tempoInput)
+              if (!Number.isFinite(value) || value <= 0) setTempoInput(String(meta.tempo))
             }}
             aria-label="Numărul indicației de tempo"
             className="w-14 bg-transparent tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"

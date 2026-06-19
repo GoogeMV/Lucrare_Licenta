@@ -79,11 +79,9 @@ export interface InstrumentSound {
   dispose(): unknown
 }
 
-// cache per familie (Vioară + Violă împart aceleași eșantioane de vioară)
-const soundCache = new Map<string, Promise<InstrumentSound>>()
 // cache de BUFFERE decodate per familie — încărcate o singură dată de pe CDN și
-// reutilizate atât de sunetul partajat (audiție) cât și de instrumentele de unică
-// folosință ale redării; astfel, după prima încărcare, construirea e instantanee
+// reutilizate de toate instrumentele de unică folosință (redare + audiție);
+// astfel, după prima încărcare, construirea unui instrument nou e instantanee
 const bufferCache = new Map<string, Promise<Record<string, AudioBuffer>>>()
 
 function createFallbackSynth(): InstrumentSound {
@@ -198,25 +196,7 @@ export function createInstrument(instrument: string): Promise<InstrumentSound> {
 }
 
 /**
- * Sunetul PARTAJAT pentru un instrument — cu cache pe sesiune; folosit de
- * audiție (preview scurt la editare), unde nu e nevoie de oprire bruscă.
- * La eșec (offline/CDN căzut) întoarce sintetizatorul generic.
- */
-export function getInstrumentSound(instrument: string): Promise<InstrumentSound> {
-  const family = INSTRUMENT_SAMPLE_FAMILY[instrument] ?? "piano"
-  let cached = soundCache.get(family)
-  if (!cached) {
-    cached = makeSampler(family).catch((error) => {
-      console.warn(`Eșantioanele pentru "${family}" nu s-au încărcat — folosim sintetizatorul generic.`, error)
-      return createFallbackSynth()
-    })
-    soundCache.set(family, cached)
-  }
-  return cached
-}
-
-/**
- * Sunet de UNICĂ FOLOSINȚĂ pentru redare — construit din bufferele din cache
+ * Sunet de UNICĂ FOLOSINȚĂ pentru redare ȘI audiție — construit din bufferele din cache
  * (instant după prima încărcare). Spre deosebire de cel partajat, player-ul îl
  * DISTRUGE la Stop/Pauză: doar `dispose()` taie notele deja programate pe ceasul
  * audio (Tone golește lista de surse active la programare, deci `releaseAll` nu

@@ -75,10 +75,6 @@ interface ScoreEditorValue extends ScoreState {
   theme: Theme
   toggleTheme: () => void
   setTheme: (theme: Theme) => void
-  /** Viteza de redare (%, implicit 100) — separată de tempo-ul notat; nu se
-   *  salvează și nu intră în undo (reglaj de practică „pe parcurs") */
-  playbackRate: number
-  setPlaybackRate: (percent: number) => void
   /** Mixer per portativ (volum 0–1 + mute), pe id de portativ — reglaj de redare
    *  (nu intră în undo, nu se salvează). Lipsă = volum 1, nemutat. */
   mixer: Record<string, { volume: number; muted: boolean }>
@@ -127,7 +123,6 @@ export function ScoreEditorProvider({ children }: { children: ReactNode }) {
   function toggleTheme() {
     setTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length])
   }
-  const [playbackRate, setPlaybackRate] = useState(100)
   const [mixer, setMixer] = useState<Record<string, { volume: number; muted: boolean }>>({})
   const [isPlaying, setIsPlaying] = useState(false)
   // un singur player pe toată aplicația — partajat între Play și Space
@@ -156,8 +151,6 @@ export function ScoreEditorProvider({ children }: { children: ReactNode }) {
         theme,
         toggleTheme,
         setTheme,
-        playbackRate,
-        setPlaybackRate,
         mixer,
         setStaffVolume: (staffId, volume) =>
           setMixer((m) => ({ ...m, [staffId]: { volume, muted: m[staffId]?.muted ?? false } })),
