@@ -24,6 +24,27 @@ describe("makeTriplet", () => {
   })
 })
 
+describe("intrare MIDI (insertNoteWithPitch + addPitchToSelectedNote)", () => {
+  it("inserează o notă nouă la înălțimea exactă, după nota selectată", () => {
+    const before = initialScoreState.staves[0].notes.length
+    let s = scoreReducer(initialScoreState, { type: "selectNote", id: firstId })
+    s = scoreReducer(s, { type: "insertNoteWithPitch", pitch: { step: "C", octave: 4 } })
+    expect(s.staves[0].notes.length).toBe(before + 1)
+    // s-a inserat după prima notă (index 1) și a devenit selecția curentă
+    expect(s.staves[0].notes[1].pitches[0]).toEqual({ step: "C", octave: 4 })
+    expect(s.selectedId).toBe(s.staves[0].notes[1].id)
+  })
+
+  it("adaugă a doua înălțime la nota selectată → acord (sortat ascendent)", () => {
+    let s = scoreReducer(initialScoreState, { type: "selectNote", id: firstId })
+    s = scoreReducer(s, { type: "insertNoteWithPitch", pitch: { step: "C", octave: 4 } })
+    s = scoreReducer(s, { type: "addPitchToSelectedNote", pitch: { step: "E", octave: 4 } })
+    const chord = s.staves[0].notes[1]
+    expect(chord.pitches).toHaveLength(2)
+    expect(chord.pitches.map((p) => p.step)).toEqual(["C", "E"])
+  })
+})
+
 describe("toggleRest", () => {
   it("comută nota în pauză și înapoi", () => {
     let s = scoreReducer(initialScoreState, { type: "selectNote", id: firstId })

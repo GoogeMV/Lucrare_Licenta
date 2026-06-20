@@ -12,6 +12,13 @@ interface AuthValue {
   ready: boolean
   login: (email: string, password: string) => Promise<void>
   register: (email: string, password: string) => Promise<void>
+  /** Schimbă emailul și/sau parola (cere parola curentă). Reemite tokenul. */
+  updateAccount: (
+    currentPassword: string,
+    changes: { email?: string; newPassword?: string },
+  ) => Promise<void>
+  /** Șterge contul curent (cere parola) și deconectează. */
+  deleteAccount: (password: string) => Promise<void>
   logout: () => void
 }
 
@@ -66,12 +73,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(data.user)
   }
 
+  async function updateAccount(
+    currentPassword: string,
+    changes: { email?: string; newPassword?: string },
+  ) {
+    const data = await api<{ token: string; user: AuthUser }>("/auth/me", {
+      method: "PUT",
+      body: { currentPassword, ...changes },
+    })
+    setAuthToken(data.token)
+    setUser(data.user)
+  }
+
+  async function deleteAccount(password: string) {
+    await api("/auth/me", { method: "DELETE", body: { password } })
+    setAuthToken(null)
+    setUser(null)
+  }
+
   function logout() {
     setAuthToken(null)
     setUser(null)
   }
 
-  return <AuthContext.Provider value={{ user, ready, login, register, logout }}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider
+      value={{ user, ready, login, register, updateAccount, deleteAccount, logout }}
+    >
+      {children}
+    </AuthContext.Provider>
+  )
 }
 
 // eslint-disable-next-line react-refresh/only-export-components

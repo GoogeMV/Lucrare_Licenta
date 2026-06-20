@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react"
-import { ChevronDown, LogOut, Save, Trash2, UserRound } from "lucide-react"
+import { ChevronDown, LogOut, Save, Settings, Trash2, UserRound } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/state/authContext"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { api } from "@/lib/api/client"
 import { AuthModal } from "@/components/layout/AuthModal"
+import { AccountSettingsModal } from "@/components/layout/AccountSettingsModal"
 import type { Staff, TimeSignature } from "@/types/score"
 
 const MENU_ITEM_CLASS =
@@ -37,6 +38,7 @@ export function AccountMenu() {
   const { user, logout } = useAuth()
   const { staves, timeSignature, meta, setMeta, dispatch } = useScoreEditor()
   const [authOpen, setAuthOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [open, setOpen] = useState(false)
   const [scores, setScores] = useState<ScoreListItem[]>([])
   const [status, setStatus] = useState<string | null>(null)
@@ -177,6 +179,16 @@ export function AccountMenu() {
             type="button"
             className={MENU_ITEM_CLASS}
             onClick={() => {
+              setSettingsOpen(true)
+              setOpen(false)
+            }}
+          >
+            <Settings className="size-4" /> Setări cont
+          </button>
+          <button
+            type="button"
+            className={MENU_ITEM_CLASS}
+            onClick={() => {
               logout()
               setOpen(false)
             }}
@@ -185,6 +197,7 @@ export function AccountMenu() {
           </button>
         </div>
       )}
+      <AccountSettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   )
 }

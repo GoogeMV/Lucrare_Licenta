@@ -73,12 +73,20 @@ export interface InstrumentSound {
     /** Volumul atacului (0–1) — folosit pentru nuanțe (p/f); implicit maxim */
     velocity?: number,
   ): unknown
+  /** Atac fără release automat — sursa rămâne urmărită, deci `releaseAll`/
+   *  `triggerRelease` o pot tăia ulterior (folosit de audiție) */
+  triggerAttack(notes: string | string[], time?: number, velocity?: number): unknown
+  triggerRelease(notes: string | string[], time?: number): unknown
   releaseAll(): unknown
   /** Distruge instrumentul — taie TOT sunetul (inclusiv notele deja programate);
    *  `releaseAll` nu ajunge, fiindcă Tone golește lista de surse la programare */
   dispose(): unknown
 }
 
+// sampler PARTAJAT per familie (gata încărcat, refolosit) — pentru audiție, care
+// trebuie să pornească INSTANT (un sampler nou per notă ar fi async și s-ar anula
+// reciproc la navigare rapidă → tăcere)
+const sharedSoundCache = new Map<string, Promise<InstrumentSound>>()
 // cache de BUFFERE decodate per familie — încărcate o singură dată de pe CDN și
 // reutilizate de toate instrumentele de unică folosință (redare + audiție);
 // astfel, după prima încărcare, construirea unui instrument nou e instantanee
@@ -208,4 +216,23 @@ export function createPlaybackSound(instrument: string): Promise<InstrumentSound
     console.warn(`Eșantioanele pentru "${family}" nu s-au încărcat — folosim sintetizatorul generic.`, error)
     return createFallbackSynth()
   })
+}
+
+/**
+ * Sunet PARTAJAT (cache pe sesiune) pentru AUDIȚIE — gata încărcat și refolosit,
+ * ca trigger-ul să fie instant la navigare rapidă. Audiția îl taie cu `releaseAll`
+ * între note (folosind `triggerAttack`, nu `triggerAttackRelease`, ca sursa să
+ * rămână urmăribilă); nu se distruge.
+ */
+export function getInstrumentSound(instrument: string): Promise<InstrumentSound> {
+  const family = INSTRUMENT_SAMPLE_FAMILY[instrument] ?? "piano"
+  let cached = sharedSoundCache.get(family)
+  if (!cached) {
+    cached = makeSampler(family).catch((error) => {
+      console.warn(`Eșantioanele pentru "${family}" nu s-au încărcat — folosim sintetizatorul generic.`, error)
+      return createFallbackSynth()
+    })
+    sharedSoundCache.set(family, cached)
+  }
+  return cached
 }

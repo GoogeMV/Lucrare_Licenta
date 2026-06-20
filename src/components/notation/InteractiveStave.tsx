@@ -19,7 +19,7 @@ import {
   Tuplet,
 } from "vexflow"
 import { useScoreEditor, type Theme } from "@/state/scoreEditorContext"
-import { buildStaffPositions, pitchIndex, pitchToVexflowKey, TOP_LINE_PITCH } from "@/lib/notation/pitch"
+import { buildStaffPositions, pitchIndex, pitchToVexflowKey, semitoneToPitch, TOP_LINE_PITCH } from "@/lib/notation/pitch"
 import { DURATION_HOTKEYS, REST_HOTKEYS, entryBeats, playbackQuarterBpm, tupletNormal, vexflowDurationCode } from "@/lib/notation/duration"
 import { splitIntoMeasures, type MeasureFragment } from "@/lib/notation/measure"
 import { ACCIDENTAL_HOTKEYS, ACCIDENTAL_TO_VEXFLOW } from "@/lib/notation/accidental"
@@ -28,7 +28,8 @@ import { keyAccidentalCount } from "@/lib/notation/keySignature"
 import { instrumentLabel } from "@/lib/notation/instrument"
 import { openStringPitch, stringCountForInstrument, supportsTab, tabPosition } from "@/lib/notation/tab"
 import { onPlaybackHighlight, emitPlaybackHighlight } from "@/lib/audio/playbackHighlight"
-import { auditionPitches } from "@/lib/audio/audition"
+import { auditionPitches, stopAudition } from "@/lib/audio/audition"
+import { onMidiNoteOn, onMidiNoteOff } from "@/lib/midi/midiInput"
 import { measureQuarters, timeSignatureLabel } from "@/lib/notation/timeSignature"
 import type { Clef, NoteEntry, Pitch, Step } from "@/types/score"
 
@@ -1399,7 +1400,8 @@ export function InteractiveStave() {
     const staff = staves.find((s) => s.notes.some((n) => n.id === selectedId))
     const entry = staff?.notes.find((n) => n.id === selectedId)
     if (!staff || !entry || entry.type !== "note") {
-      // nimic de audiat (deselectat / pauză)
+      // nimic de audiat (deselectat / pauză) — oprim nota care eventual mai sună
+      stopAudition()
       auditionKeyRef.current = selectedId ?? ""
       return
     }
@@ -1420,6 +1422,25 @@ export function InteractiveStave() {
     const seconds = (entryBeats(entry) * 60) / bpm
     void auditionPitches(staff.instrument, staff.keySignature, pitches, seconds)
   }, [selectedId, selectedPitchIndex, staves])
+
+  // intrare MIDI: o claviatură externă introduce note în portativul activ. O notă
+  // = note-on cu nicio altă tastă ținută; tastele apăsate simultan (ținute) se
+  // adaugă ca acord pe nota tocmai introdusă. Evenimentele sosesc doar când MIDI
+  // e pornit din buton (vezi MidiButton). MIDI 60 = Do central → octava noastră 4.
+  useEffect(() => {
+    const held = new Set<number>()
+    const offOn = onMidiNoteOn((midiNote) => {
+      const pitch = semitoneToPitch(midiNote - 12)
+      if (held.size > 0) dispatch({ type: "addPitchToSelectedNote", pitch })
+      else dispatch({ type: "insertNoteWithPitch", pitch })
+      held.add(midiNote)
+    })
+    const offOff = onMidiNoteOff((midiNote) => held.delete(midiNote))
+    return () => {
+      offOn()
+      offOff()
+    }
+  }, [dispatch])
 
   // navigare/editare din tastatură (vezi indicațiile de sub portativ)
   useEffect(() => {

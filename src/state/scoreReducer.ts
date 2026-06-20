@@ -139,6 +139,8 @@ export type ScoreAction =
   | { type: "addPitchToNote"; noteId: string; pitch: Pitch }
   | { type: "insertNote" }
   | { type: "insertNoteWithStep"; step: Step }
+  | { type: "insertNoteWithPitch"; pitch: Pitch }
+  | { type: "addPitchToSelectedNote"; pitch: Pitch }
   | { type: "insertRest"; duration: Duration }
   | { type: "setDuration"; duration: Duration }
   | { type: "transposeSelected"; direction: "up" | "down" }
@@ -496,6 +498,26 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
         duration: state.selectedDuration,
       }
       return insertInActiveStaff(state, entry)
+    }
+
+    case "insertNoteWithPitch": {
+      // introducere MIDI: o notă nouă la înălțimea EXACTĂ primită (octava dată),
+      // inserată după nota selectată (ca litera C–B, dar fără calcul de octavă)
+      const entry: NoteEntry = {
+        id: nextId(),
+        type: "note",
+        pitches: [action.pitch],
+        duration: state.selectedDuration,
+      }
+      return insertInActiveStaff(state, entry)
+    }
+
+    case "addPitchToSelectedNote": {
+      // a doua (a treia…) tastă MIDI ținută simultan → acord pe nota tocmai
+      // inserată (cea selectată). Reducer-ul procesează secvențial, deci selectedId
+      // e deja nota nouă; refolosim logica de la addPitchToNote.
+      if (!state.selectedId) return state
+      return scoreReducer(state, { type: "addPitchToNote", noteId: state.selectedId, pitch: action.pitch })
     }
 
     case "insertRest": {

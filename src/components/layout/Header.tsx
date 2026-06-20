@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button"
 import { BookOpen, Check, ChevronDown, HelpCircle, MoveHorizontal, Palette, Redo2, Undo2 } from "lucide-react"
 import { TOGGLE_HELP_EVENT } from "@/components/layout/HelpOverlay"
 import { AccountMenu } from "@/components/layout/AccountMenu"
+import { MidiButton } from "@/components/layout/MidiButton"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { saveScore, loadScore, hasSavedScore } from "@/lib/storage/scoreStorage"
 import { scoreToMusicXML } from "@/lib/export/musicxml"
@@ -434,6 +435,7 @@ export function Header() {
           <Palette className="size-4" />
           Temă: {THEME_LABELS[theme]}
         </Button>
+        <MidiButton />
         <Button
           variant="ghost"
           size="icon"

@@ -70,6 +70,14 @@ const SECTIONS: Section[] = [
       ["0–9 (în TAB)", "setează fret-ul notei selectate"],
     ],
   },
+  {
+    title: "Intrare MIDI",
+    items: [
+      ["buton MIDI", "pornește o claviatură externă (Chrome/Edge)"],
+      ["o tastă", "introduce nota în portativul activ"],
+      ["taste ținute", "acord pe nota curentă"],
+    ],
+  },
 ]
 
 function Kbd({ children }: { children: string }) {

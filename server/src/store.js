@@ -33,12 +33,30 @@ export async function getUserByEmail(email) {
   const { rows } = await pool.query("SELECT * FROM users WHERE email = $1", [email])
   return rows[0] ?? null
 }
+export async function getUserById(id) {
+  const { rows } = await pool.query("SELECT * FROM users WHERE id = $1", [id])
+  return rows[0] ?? null
+}
 export async function createUser(email, passwordHash) {
   const { rows } = await pool.query(
     "INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email",
     [email, passwordHash],
   )
   return rows[0]
+}
+export async function updateUserEmail(id, email) {
+  const { rows } = await pool.query(
+    "UPDATE users SET email = $1 WHERE id = $2 RETURNING id, email",
+    [email, id],
+  )
+  return rows[0]
+}
+export async function updateUserPassword(id, passwordHash) {
+  await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [passwordHash, id])
+}
+export async function deleteUser(id) {
+  // partiturile dispar prin ON DELETE CASCADE
+  await pool.query("DELETE FROM users WHERE id = $1", [id])
 }
 
 // --- partituri ---

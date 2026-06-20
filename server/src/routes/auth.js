@@ -1,5 +1,12 @@
 import { Router } from "express"
-import { getUserByEmail, createUser } from "../store.js"
+import {
+  getUserByEmail,
+  getUserById,
+  createUser,
+  updateUserEmail,
+  updateUserPassword,
+  deleteUser,
+} from "../store.js"
 import { hashPassword, verifyPassword, signToken, authMiddleware } from "../auth.js"
 
 const router = Router()
@@ -45,5 +52,67 @@ router.post(
 router.get("/me", authMiddleware, (req, res) => {
   res.json({ user: { id: req.user.id, email: req.user.email } })
 })
+
+/**
+ * Actualizează contul curent: email și/sau parolă. Cere ÎNTOTDEAUNA parola
+ * curentă (confirmare). Reemite tokenul, fiindcă emailul e în payload-ul JWT.
+ */
+router.put(
+  "/me",
+  authMiddleware,
+  wrap(async (req, res) => {
+    const user = await getUserById(req.user.id)
+    if (!user) return res.status(404).json({ error: "Cont inexistent" })
+
+    const currentPassword = String(req.body?.currentPassword || "")
+    if (!verifyPassword(currentPassword, user.password_hash)) {
+      return res.status(401).json({ error: "Parola curentă e greșită" })
+    }
+
+    let email = user.email
+    // schimbare email (dacă e furnizat și diferit)
+    if (req.body?.email !== undefined) {
+      const newEmail = String(req.body.email).trim().toLowerCase()
+      if (!newEmail || !newEmail.includes("@")) return res.status(400).json({ error: "Email invalid" })
+      if (newEmail !== user.email) {
+        if (await getUserByEmail(newEmail)) {
+          return res.status(409).json({ error: "Există deja un cont cu acest email" })
+        }
+        const updated = await updateUserEmail(user.id, newEmail)
+        email = updated.email
+      }
+    }
+
+    // schimbare parolă (dacă e furnizată una nouă, nevidă)
+    const newPassword = String(req.body?.newPassword || "")
+    if (newPassword.length > 0) {
+      if (newPassword.length < 6) {
+        return res.status(400).json({ error: "Parola nouă trebuie să aibă cel puțin 6 caractere" })
+      }
+      await updateUserPassword(user.id, hashPassword(newPassword))
+    }
+
+    const fresh = { id: user.id, email }
+    res.json({ token: signToken(fresh), user: fresh })
+  }),
+)
+
+/** Șterge contul curent (și toate partiturile, prin ON DELETE CASCADE). Cere parola. */
+router.delete(
+  "/me",
+  authMiddleware,
+  wrap(async (req, res) => {
+    const user = await getUserById(req.user.id)
+    if (!user) return res.status(404).json({ error: "Cont inexistent" })
+
+    const password = String(req.body?.password || "")
+    if (!verifyPassword(password, user.password_hash)) {
+      return res.status(401).json({ error: "Parolă greșită" })
+    }
+
+    await deleteUser(user.id)
+    res.json({ ok: true })
+  }),
+)
 
 export default router
