@@ -48,10 +48,17 @@ router.post(
   }),
 )
 
-/** Datele contului curent (validează tokenul) */
-router.get("/me", authMiddleware, (req, res) => {
-  res.json({ user: { id: req.user.id, email: req.user.email } })
-})
+/** Datele contului curent: validează tokenul ȘI verifică în DB că mai există
+ *  (un token de cont șters/cu email schimbat ar fi altfel acceptat orbește) */
+router.get(
+  "/me",
+  authMiddleware,
+  wrap(async (req, res) => {
+    const user = await getUserById(req.user.id)
+    if (!user) return res.status(401).json({ error: "Cont inexistent" })
+    res.json({ user: { id: user.id, email: user.email } })
+  }),
+)
 
 /**
  * Actualizează contul curent: email și/sau parolă. Cere ÎNTOTDEAUNA parola

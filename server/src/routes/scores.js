@@ -1,5 +1,14 @@
 import { Router } from "express"
-import { listScores, getScore, createScore, updateScore, deleteScore } from "../store.js"
+import {
+  listScores,
+  getScore,
+  createScore,
+  updateScore,
+  deleteScore,
+  getUserByEmail,
+  createOrUpdateShare,
+  listSharesForScore,
+} from "../store.js"
 import { authMiddleware } from "../auth.js"
 
 const router = Router()
@@ -63,6 +72,36 @@ router.delete(
   wrap(async (req, res) => {
     await deleteScore(req.user.id, Number(req.params.id))
     res.json({ ok: true })
+  }),
+)
+
+/** Partajează partitura :id cu un utilizator (după email), cu portativele alese */
+router.post(
+  "/:id/shares",
+  wrap(async (req, res) => {
+    const scoreId = Number(req.params.id)
+    const score = await getScore(req.user.id, scoreId)
+    if (!score) return res.status(404).json({ error: "Partitura nu există" })
+
+    const email = String(req.body?.email || "").trim().toLowerCase()
+    const recipient = await getUserByEmail(email)
+    if (!recipient) return res.status(404).json({ error: "Nu există un cont cu acest email" })
+    if (recipient.id === req.user.id) return res.status(400).json({ error: "Nu poți partaja cu tine însuți" })
+
+    const staffIds = Array.isArray(req.body?.staffIds) ? req.body.staffIds.map(String) : []
+    const share = await createOrUpdateShare(scoreId, req.user.id, recipient.id, staffIds)
+    res.json({ id: share.id })
+  }),
+)
+
+/** Cu cine e partajată partitura :id (pentru gestionare/revocare) */
+router.get(
+  "/:id/shares",
+  wrap(async (req, res) => {
+    const scoreId = Number(req.params.id)
+    const score = await getScore(req.user.id, scoreId)
+    if (!score) return res.status(404).json({ error: "Partitura nu există" })
+    res.json({ shares: await listSharesForScore(req.user.id, scoreId) })
   }),
 )
 

@@ -3,6 +3,7 @@ import express from "express"
 import cors from "cors"
 import authRoutes from "./routes/auth.js"
 import scoreRoutes from "./routes/scores.js"
+import shareRoutes from "./routes/shares.js"
 import { initDb } from "./store.js"
 
 const app = express()
@@ -12,6 +13,7 @@ app.use(express.json({ limit: "8mb" })) // partiturile pot fi mari (multe note)
 app.get("/api/health", (_req, res) => res.json({ ok: true }))
 app.use("/api/auth", authRoutes)
 app.use("/api/scores", scoreRoutes)
+app.use("/api/shares", shareRoutes)
 
 const PORT = process.env.PORT || 4000
 

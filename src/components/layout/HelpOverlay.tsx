@@ -65,6 +65,7 @@ const SECTIONS: Section[] = [
     title: "Redare & global",
     items: [
       ["Space", "redă (selecția / portativul bifat / tot)"],
+      ["Ctrl+S", "salvează (în cont sau local) · autosave la 3 min"],
       ["Ctrl+Z / Ctrl+Y", "anulează / refă"],
       ["Ctrl+C / X / V", "copiază / taie / lipește"],
       ["0–9 (în TAB)", "setează fret-ul notei selectate"],

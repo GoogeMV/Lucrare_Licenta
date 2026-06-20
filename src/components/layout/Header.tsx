@@ -55,7 +55,7 @@ const MENU_ITEM_CLASS =
  * Dropdown minimal, închis la click în afara lui.
  */
 function FileMenu() {
-  const { staves, timeSignature, meta, setMeta, dispatch } = useScoreEditor()
+  const { staves, timeSignature, meta, setMeta, dispatch, setCurrentScoreId } = useScoreEditor()
   const [open, setOpen] = useState(false)
   const [justSaved, setJustSaved] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -95,6 +95,7 @@ function FileMenu() {
       tempoBeatDotted: saved.tempoBeatDotted ?? false,
       tempoText: saved.tempoText ?? "",
     })
+    setCurrentScoreId(null) // partitură locală, nu mai edităm cea din cloud
   }
 
   function handleNew() {
@@ -102,6 +103,7 @@ function FileMenu() {
     if (!window.confirm("Începi o partitură nouă? Modificările nesalvate se pierd.")) return
     dispatch({ type: "newScore" })
     setMeta({ title: "", composer: "", tempo: 120, tempoBeat: "quarter", tempoBeatDotted: false, tempoText: "" })
+    setCurrentScoreId(null)
   }
 
   function handleImportClick() {
@@ -118,6 +120,7 @@ function FileMenu() {
       if (!window.confirm("Înlocuiești partitura curentă cu fișierul importat?")) return
       dispatch({ type: "loadScore", staves: imported.staves, timeSignature: imported.timeSignature })
       setMeta(imported.meta)
+      setCurrentScoreId(null) // import = partitură nouă, nu cea din cloud
     } catch (error) {
       window.alert(`Importul a eșuat: ${error instanceof Error ? error.message : "fișier nevalid"}`)
     }

@@ -10,6 +10,10 @@ interface AuthValue {
   user: AuthUser | null
   /** Adevărat după ce s-a încheiat validarea tokenului salvat la pornire */
   ready: boolean
+  /** Mod „deconectat" ales explicit: folosești editorul fără cont (doar salvare locală) */
+  guest: boolean
+  /** Intră în editor fără cont (de pe pagina de login) */
+  continueAsGuest: () => void
   login: (email: string, password: string) => Promise<void>
   register: (email: string, password: string) => Promise<void>
   /** Schimbă emailul și/sau parola (cere parola curentă). Reemite tokenul. */
@@ -31,6 +35,7 @@ const AuthContext = createContext<AuthValue | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [ready, setReady] = useState(false)
+  const [guest, setGuest] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -94,11 +99,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   function logout() {
     setAuthToken(null)
     setUser(null)
+    setGuest(false) // deconectarea readuce la pagina de login (nu în mod guest)
   }
 
   return (
     <AuthContext.Provider
-      value={{ user, ready, login, register, updateAccount, deleteAccount, logout }}
+      value={{
+        user,
+        ready,
+        guest,
+        continueAsGuest: () => setGuest(true),
+        login,
+        register,
+        updateAccount,
+        deleteAccount,
+        logout,
+      }}
     >
       {children}
     </AuthContext.Provider>

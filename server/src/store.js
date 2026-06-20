@@ -25,6 +25,17 @@ export async function initDb() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS shares (
+      id SERIAL PRIMARY KEY,
+      score_id INTEGER NOT NULL REFERENCES scores(id) ON DELETE CASCADE,
+      owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      shared_with_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      -- portativele (id-uri) vizibile destinatarului; [] = toată partitura
+      staff_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      can_edit BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (score_id, shared_with_id)
+    );
   `)
 }
 
@@ -90,4 +101,59 @@ export async function updateScore(userId, id, title, data) {
 }
 export async function deleteScore(userId, id) {
   await pool.query("DELETE FROM scores WHERE id = $1 AND user_id = $2", [id, userId])
+}
+
+// --- partajări (sharing granular) ---
+/** Creează sau actualizează o partajare (un destinatar per partitură) */
+export async function createOrUpdateShare(scoreId, ownerId, sharedWithId, staffIds) {
+  const { rows } = await pool.query(
+    `INSERT INTO shares (score_id, owner_id, shared_with_id, staff_ids)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (score_id, shared_with_id)
+     DO UPDATE SET staff_ids = EXCLUDED.staff_ids
+     RETURNING id`,
+    [scoreId, ownerId, sharedWithId, JSON.stringify(staffIds)],
+  )
+  return rows[0]
+}
+/** Cu cine e partajată o partitură a proprietarului (cu emailul destinatarului) */
+export async function listSharesForScore(ownerId, scoreId) {
+  const { rows } = await pool.query(
+    `SELECT s.id, s.staff_ids, u.email AS shared_with_email
+       FROM shares s JOIN users u ON u.id = s.shared_with_id
+      WHERE s.score_id = $1 AND s.owner_id = $2
+      ORDER BY s.created_at DESC`,
+    [scoreId, ownerId],
+  )
+  return rows
+}
+/** Revocă o partajare (doar proprietarul ei) */
+export async function deleteShare(ownerId, shareId) {
+  const { rowCount } = await pool.query("DELETE FROM shares WHERE id = $1 AND owner_id = $2", [shareId, ownerId])
+  return rowCount > 0
+}
+/** Partiturile partajate CU acest utilizator (cu emailul proprietarului) */
+export async function listSharedWithUser(userId) {
+  const { rows } = await pool.query(
+    `SELECT s.id AS share_id, sc.title, sc.updated_at, u.email AS owner_email
+       FROM shares s
+       JOIN scores sc ON sc.id = s.score_id
+       JOIN users u ON u.id = s.owner_id
+      WHERE s.shared_with_id = $1
+      ORDER BY sc.updated_at DESC`,
+    [userId],
+  )
+  return rows
+}
+/** O partitură partajată (pentru destinatar) — cu lista de portative permise */
+export async function getSharedScore(userId, shareId) {
+  const { rows } = await pool.query(
+    `SELECT s.staff_ids, sc.title, sc.data, u.email AS owner_email
+       FROM shares s
+       JOIN scores sc ON sc.id = s.score_id
+       JOIN users u ON u.id = s.owner_id
+      WHERE s.id = $1 AND s.shared_with_id = $2`,
+    [shareId, userId],
+  )
+  return rows[0] ?? null
 }

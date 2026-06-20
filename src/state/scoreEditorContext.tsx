@@ -86,6 +86,11 @@ interface ScoreEditorValue extends ScoreState {
   /** Adevărat cât timp se redă (reactiv — pentru iconița butonului Play) */
   isPlaying: boolean
   setIsPlaying: Dispatch<SetStateAction<boolean>>
+  /** Id-ul partiturii din cloud pe care o EDITĂM acum (dacă există) — ca salvarea
+   *  în cont și autosave-ul s-o ACTUALIZEZE, nu să creeze duplicate. `null` =
+   *  partitură nouă/locală. Tranzitoriu (nu se salvează, nu intră în undo). */
+  currentScoreId: number | null
+  setCurrentScoreId: (id: number | null) => void
 }
 
 const ScoreEditorContext = createContext<ScoreEditorValue | null>(null)
@@ -125,6 +130,7 @@ export function ScoreEditorProvider({ children }: { children: ReactNode }) {
   }
   const [mixer, setMixer] = useState<Record<string, { volume: number; muted: boolean }>>({})
   const [isPlaying, setIsPlaying] = useState(false)
+  const [currentScoreId, setCurrentScoreId] = useState<number | null>(null)
   // un singur player pe toată aplicația — partajat între Play și Space
   const [player] = useState(() => new ScorePlayer())
   useEffect(() => () => player.stop(), [player])
@@ -162,6 +168,8 @@ export function ScoreEditorProvider({ children }: { children: ReactNode }) {
         player,
         isPlaying,
         setIsPlaying,
+        currentScoreId,
+        setCurrentScoreId,
       }}
     >
       {children}
