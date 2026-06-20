@@ -32,6 +32,7 @@ interface CloudScoreData {
   staves: Staff[]
   timeSignature: TimeSignature
   barlines?: Record<number, import("@/types/score").BarType>
+  repeatCounts?: Record<number, number>
   title: string
   composer: string
   tempo: number
@@ -101,7 +102,7 @@ export function AccountMenu() {
         shared: { title: string; owner: string; data: CloudScoreData }
       }>(`/shares/${shareId}`)
       const d = s.data
-      dispatch({ type: "loadScore", staves: d.staves, timeSignature: d.timeSignature, barlines: d.barlines })
+      dispatch({ type: "loadScore", staves: d.staves, timeSignature: d.timeSignature, barlines: d.barlines, repeatCounts: d.repeatCounts })
       setMeta({
         title: d.title ?? "",
         composer: d.composer ?? "",
@@ -133,7 +134,7 @@ export function AccountMenu() {
     try {
       const { score } = await api<{ score: { data: CloudScoreData } }>(`/scores/${id}`)
       const d = score.data
-      dispatch({ type: "loadScore", staves: d.staves, timeSignature: d.timeSignature, barlines: d.barlines })
+      dispatch({ type: "loadScore", staves: d.staves, timeSignature: d.timeSignature, barlines: d.barlines, repeatCounts: d.repeatCounts })
       setMeta({
         title: d.title ?? "",
         composer: d.composer ?? "",

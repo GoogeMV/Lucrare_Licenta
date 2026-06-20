@@ -25,6 +25,7 @@ export function TransportBar() {
     selectedStaffIds,
     timeSignature,
     barlines,
+    repeatCounts,
     meta,
     setMeta,
     mixer,
@@ -101,7 +102,7 @@ export function TransportBar() {
     // repetițiile se extind (secțiunile se redau de două ori)
     const beatsPerMeasure = measureQuarters(timeSignature)
     const parts = played.map((s) => ({
-      notes: expandRepeats(s.notes, barlines, beatsPerMeasure),
+      notes: expandRepeats(s.notes, barlines, beatsPerMeasure, repeatCounts),
       keySignature: s.keySignature,
       instrument: s.instrument,
       volume: mixer[s.id]?.volume ?? 1,

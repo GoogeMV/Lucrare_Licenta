@@ -141,6 +141,7 @@ export function expandRepeats(
   entries: NoteEntry[],
   barlines: Record<number, BarType> | undefined,
   beatsPerMeasure: number,
+  repeatCounts?: Record<number, number>,
 ): NoteEntry[] {
   if (!barlines) return entries
   const hasRepeat = Object.values(barlines).some((b) => b === "repeat-begin" || b === "repeat-end")
@@ -157,16 +158,22 @@ export function expandRepeats(
   const total = byMeasure.length
 
   const out: NoteEntry[] = []
-  const consumed = new Set<number>() // repeat-end deja luate (evită bucla infinită)
+  // câte salturi înapoi am făcut deja pentru fiecare repeat-end (un repeat-end care
+  // se cântă de N ori sare înapoi de N−1 ori)
+  const jumps = new Map<number, number>()
   let repeatStart = 0
   let i = 0
   while (i < total) {
     if (barlines[i] === "repeat-begin") repeatStart = i
     for (const e of byMeasure[i] ?? []) out.push(e)
-    if (barlines[i] === "repeat-end" && !consumed.has(i)) {
-      consumed.add(i)
-      i = repeatStart
-      continue
+    if (barlines[i] === "repeat-end") {
+      const times = Math.max(2, repeatCounts?.[i] ?? 2)
+      const done = jumps.get(i) ?? 0
+      if (done < times - 1) {
+        jumps.set(i, done + 1)
+        i = repeatStart
+        continue
+      }
     }
     i++
   }

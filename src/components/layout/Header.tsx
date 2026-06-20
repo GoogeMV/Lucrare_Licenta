@@ -56,7 +56,8 @@ const MENU_ITEM_CLASS =
  * Dropdown minimal, închis la click în afara lui.
  */
 function FileMenu() {
-  const { staves, timeSignature, barlines, meta, setMeta, dispatch, setCurrentScoreId } = useScoreEditor()
+  const { staves, timeSignature, barlines, repeatCounts, meta, setMeta, dispatch, setCurrentScoreId } =
+    useScoreEditor()
   const [open, setOpen] = useState(false)
   const [justSaved, setJustSaved] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -73,7 +74,7 @@ function FileMenu() {
   }, [open])
 
   function handleSave() {
-    const ok = saveScore(staves, timeSignature, meta, barlines)
+    const ok = saveScore(staves, timeSignature, meta, barlines, repeatCounts)
     setOpen(false)
     if (ok) {
       // feedback scurt pe buton: "✓ Salvat"
@@ -87,7 +88,13 @@ function FileMenu() {
     setOpen(false)
     if (!saved) return
     if (!window.confirm("Înlocuiești partitura curentă cu cea salvată?")) return
-    dispatch({ type: "loadScore", staves: saved.staves, timeSignature: saved.timeSignature, barlines: saved.barlines })
+    dispatch({
+      type: "loadScore",
+      staves: saved.staves,
+      timeSignature: saved.timeSignature,
+      barlines: saved.barlines,
+      repeatCounts: saved.repeatCounts,
+    })
     setMeta({
       title: saved.title ?? "",
       composer: saved.composer ?? "",

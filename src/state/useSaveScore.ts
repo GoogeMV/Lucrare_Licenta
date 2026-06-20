@@ -15,7 +15,8 @@ export type SaveResult = "cloud" | "local" | "skip"
  */
 export function useSaveScore() {
   const { user } = useAuth()
-  const { staves, timeSignature, barlines, meta, currentScoreId, setCurrentScoreId } = useScoreEditor()
+  const { staves, timeSignature, barlines, repeatCounts, meta, currentScoreId, setCurrentScoreId } =
+    useScoreEditor()
 
   return async function save(options: { allowCreate?: boolean } = {}): Promise<SaveResult> {
     const hasNotes = staves.some((s) => s.notes.length > 0)
@@ -26,6 +27,7 @@ export function useSaveScore() {
       staves,
       timeSignature,
       barlines,
+      repeatCounts,
       title: meta.title,
       composer: meta.composer,
       tempo: meta.tempo,
@@ -59,6 +61,7 @@ export function useSaveScore() {
         tempoText: meta.tempoText,
       },
       barlines,
+      repeatCounts,
     )
     return "local"
   }

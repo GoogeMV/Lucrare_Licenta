@@ -32,6 +32,16 @@ describe("expandRepeats", () => {
       notes[0].id, notes[1].id, notes[2].id, notes[1].id, notes[2].id,
     ])
   })
+
+  it("numărul de repetări (×3) cântă secțiunea de 3 ori", () => {
+    // 2 măsuri, repeat-end pe m1 cu count 3 → m0,m1 ×3
+    const notes = [note("whole"), note("whole")]
+    const out = expandRepeats(notes, { 1: "repeat-end" }, 4, { 1: 3 })
+    expect(out).toHaveLength(6)
+    expect(out.map((n) => n.id)).toEqual([
+      notes[0].id, notes[1].id, notes[0].id, notes[1].id, notes[0].id, notes[1].id,
+    ])
+  })
 })
 
 describe("splitIntoMeasures", () => {

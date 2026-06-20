@@ -198,6 +198,7 @@ export function InteractiveStave() {
     viewMode,
     meta,
     barlines,
+    repeatCounts,
     mixer,
     theme,
     player,
@@ -823,6 +824,24 @@ export function InteractiveStave() {
         const width = context.measureText(entry.lyric).width
         context.fillText(entry.lyric, staveNote.getAbsoluteX() + 5 - width / 2, baselineY)
       })
+      // eticheta „×N" chiar deasupra liniei de sus a portativului de sus (nu la
+      // marginea de sus a sistemului — ar pluti prea sus peste notele înalte)
+      const systemTopLine = new Map<number, number>()
+      rows.forEach((r) => {
+        const cur = systemTopLine.get(r.systemIndex)
+        if (cur === undefined || r.topY < cur) systemTopLine.set(r.systemIndex, r.topY)
+      })
+      context.setFont(SHEET_FONT, 11, "bold")
+      measureSpans.forEach(({ measureIndex, systemIndex, xEnd }) => {
+        if (barlines[measureIndex] !== "repeat-end") return
+        const times = repeatCounts[measureIndex] ?? 2
+        if (times <= 2) return
+        const topLine = systemTopLine.get(systemIndex)
+        if (topLine === undefined) return
+        context.setFillStyle(ACCENT_COLOR)
+        context.fillText(`×${times}`, xEnd - 24, topLine - 6)
+      })
+
       // restaurăm culoarea de bază pentru desenele ulterioare
       context.setFillStyle(INK_COLOR)
     }
@@ -1245,7 +1264,7 @@ export function InteractiveStave() {
     if (container.scrollLeft !== savedScrollLeft) {
       container.scrollLeft = savedScrollLeft
     }
-  }, [staves, activeStaffId, selectedStaffIds, timeSignature, barlines, selectedId, selectedIds, selectedPitchIndex, viewMode, lyricMode, theme, dispatch])
+  }, [staves, activeStaffId, selectedStaffIds, timeSignature, barlines, repeatCounts, selectedId, selectedIds, selectedPitchIndex, viewMode, lyricMode, theme, dispatch])
 
   useEffect(() => {
     draw()
@@ -1561,7 +1580,7 @@ export function InteractiveStave() {
           // toată piesa → extindem repetițiile (notele selectate, în schimb, nu)
           const beatsPerMeasure = measureQuarters(timeSignature)
           parts = played.map((s) => ({
-            notes: expandRepeats(s.notes, barlines, beatsPerMeasure),
+            notes: expandRepeats(s.notes, barlines, beatsPerMeasure, repeatCounts),
             keySignature: s.keySignature,
             instrument: s.instrument,
             volume: mixer[s.id]?.volume ?? 1,
@@ -1751,6 +1770,7 @@ export function InteractiveStave() {
     mixer,
     timeSignature,
     barlines,
+    repeatCounts,
     meta.tempo,
     meta.tempoBeat,
     meta.tempoBeatDotted,

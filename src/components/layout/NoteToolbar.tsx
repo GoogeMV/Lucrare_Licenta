@@ -175,11 +175,11 @@ const BAR_OPTIONS: { type: BarType; symbol: string; label: string }[] = [
  * redarea întregii piese (secțiunea se redă de două ori).
  */
 function BarlineGroup() {
-  const { staves, selectedId, timeSignature, barlines, dispatch } = useScoreEditor()
+  const { staves, selectedId, timeSignature, barlines, repeatCounts, dispatch } = useScoreEditor()
   const disabled = !selectedId
 
-  // bara măsurii notei selectate — pentru evidențierea butonului activ
-  let activeBar: BarType | undefined
+  // măsura notei selectate — pentru evidențierea barei active și numărul de repetări
+  let measureIndex: number | null = null
   if (selectedId) {
     const staff = staves.find((s) => s.notes.some((n) => n.id === selectedId))
     if (staff) {
@@ -187,13 +187,15 @@ function BarlineGroup() {
       let beat = 0
       for (const n of staff.notes) {
         if (n.id === selectedId) {
-          activeBar = barlines[Math.floor(beat / beatsPerMeasure + 1e-9)]
+          measureIndex = Math.floor(beat / beatsPerMeasure + 1e-9)
           break
         }
         beat += entryBeats(n)
       }
     }
   }
+  const activeBar = measureIndex !== null ? barlines[measureIndex] : undefined
+  const repeatTimes = measureIndex !== null ? repeatCounts[measureIndex] ?? 2 : 2
 
   return (
     <div>
@@ -221,6 +223,30 @@ function BarlineGroup() {
           )
         })}
       </div>
+
+      {/* numărul de repetări — doar dacă măsura selectată are bară de sfârșit repetiție */}
+      {activeBar === "repeat-end" && (
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <span className="text-xs text-foreground-muted">Se repetă</span>
+          <button
+            type="button"
+            onClick={() => dispatch({ type: "setRepeatCount", times: repeatTimes - 1 })}
+            disabled={repeatTimes <= 2}
+            className={cn(TOOL_BUTTON_CLASS, DISABLED_BUTTON_CLASS, "h-7 w-7 text-base")}
+          >
+            −
+          </button>
+          <span className="w-8 text-center text-sm tabular-nums text-foreground">×{repeatTimes}</span>
+          <button
+            type="button"
+            onClick={() => dispatch({ type: "setRepeatCount", times: repeatTimes + 1 })}
+            disabled={repeatTimes >= 8}
+            className={cn(TOOL_BUTTON_CLASS, DISABLED_BUTTON_CLASS, "h-7 w-7 text-base")}
+          >
+            +
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -294,7 +320,7 @@ function DurationGroup() {
  */
 export function NoteToolbar() {
   return (
-    <aside className="frame flex w-52 shrink-0 flex-col gap-4 border-l border-border bg-panel p-3">
+    <aside className="frame flex w-52 shrink-0 flex-col gap-4 overflow-y-auto border-l border-border bg-panel p-3">
       <h2 className="text-xs font-semibold tracking-wide text-foreground-muted uppercase">
         Toolbar note
       </h2>

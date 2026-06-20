@@ -129,6 +129,9 @@ export interface ScoreState {
   /** Bare speciale per index de măsură (repetiții, bară finală/dublă). Global,
    *  ca indicația de măsură. Lipsă/absent = bară simplă implicită. */
   barlines: Record<number, BarType>
+  /** De câte ori se cântă secțiunea care se termină cu `repeat-end` pe acea măsură
+   *  (implicit 2). Cheia = index de măsură (același ca al barei repeat-end). */
+  repeatCounts: Record<number, number>
 }
 
 export type ScoreAction =
@@ -163,13 +166,20 @@ export type ScoreAction =
   | { type: "setFret"; fret: number }
   | { type: "setTimeSignature"; timeSignature: TimeSignature }
   | { type: "setBarline"; barType: BarType }
+  | { type: "setRepeatCount"; times: number }
   | { type: "addStaff"; instrument: string }
   | { type: "removeStaff"; staffId: string }
   | { type: "setActiveStaff"; staffId: string }
   | { type: "toggleStaffSelection"; staffId: string }
   | { type: "clearStaffSelection" }
   | { type: "deleteSelected" }
-  | { type: "loadScore"; staves: Staff[]; timeSignature: TimeSignature; barlines?: Record<number, BarType> }
+  | {
+      type: "loadScore"
+      staves: Staff[]
+      timeSignature: TimeSignature
+      barlines?: Record<number, BarType>
+      repeatCounts?: Record<number, number>
+    }
   | { type: "newScore" }
 
 export const initialScoreState: ScoreState = {
@@ -183,6 +193,7 @@ export const initialScoreState: ScoreState = {
   selectedPitchIndex: null,
   selectedDuration: "quarter",
   barlines: {},
+  repeatCounts: {},
 }
 
 /**
@@ -225,6 +236,21 @@ function activeStaff(state: ScoreState): Staff {
 function staffOfNote(state: ScoreState, id: string | null): Staff | undefined {
   if (!id) return undefined
   return state.staves.find((s) => s.notes.some((n) => n.id === id))
+}
+
+/** Indexul măsurii în care se află nota selectată (sau `null`) — pentru barele
+ *  și repetițiile atașate „măsurii notei selectate". */
+function selectedMeasureIndex(state: ScoreState): number | null {
+  if (!state.selectedId) return null
+  const staff = staffOfNote(state, state.selectedId)
+  if (!staff) return null
+  const beatsPerMeasure = measureQuarters(state.timeSignature)
+  let beat = 0
+  for (const n of staff.notes) {
+    if (n.id === state.selectedId) return Math.floor(beat / beatsPerMeasure + 1e-9)
+    beat += entryBeats(n)
+  }
+  return null
 }
 
 /** Înlocuiește un portativ după id, printr-o funcție de transformare */
@@ -753,23 +779,23 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
 
     case "setBarline": {
       // bara se atașează măsurii notei selectate; re-aplicarea aceluiași tip o scoate
-      if (!state.selectedId) return state
-      const staff = staffOfNote(state, state.selectedId)
-      if (!staff) return state
-      const beatsPerMeasure = measureQuarters(state.timeSignature)
-      let beat = 0
-      let measureIndex = 0
-      for (const n of staff.notes) {
-        if (n.id === state.selectedId) {
-          measureIndex = Math.floor(beat / beatsPerMeasure + 1e-9)
-          break
-        }
-        beat += entryBeats(n)
-      }
+      const measureIndex = selectedMeasureIndex(state)
+      if (measureIndex === null) return state
       const barlines = { ...state.barlines }
       if (barlines[measureIndex] === action.barType) delete barlines[measureIndex]
       else barlines[measureIndex] = action.barType
-      return { ...state, barlines }
+      // numărul de repetări are sens doar pentru repeat-end; altfel îl curățăm
+      const repeatCounts = { ...state.repeatCounts }
+      if (barlines[measureIndex] !== "repeat-end") delete repeatCounts[measureIndex]
+      return { ...state, barlines, repeatCounts }
+    }
+
+    case "setRepeatCount": {
+      // de câte ori se cântă secțiunea (2..8), pe măsura cu repeat-end a notei selectate
+      const measureIndex = selectedMeasureIndex(state)
+      if (measureIndex === null || state.barlines[measureIndex] !== "repeat-end") return state
+      const times = Math.max(2, Math.min(8, Math.round(action.times)))
+      return { ...state, repeatCounts: { ...state.repeatCounts, [measureIndex]: times } }
     }
 
     case "addStaff": {
@@ -888,6 +914,7 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
         staves: action.staves,
         timeSignature: action.timeSignature,
         barlines: action.barlines ?? {},
+        repeatCounts: action.repeatCounts ?? {},
         activeStaffId: action.staves[0].id,
         selectedStaffIds: [],
         ...selectSingle(null),
@@ -908,6 +935,7 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
         staves: [staff],
         timeSignature: { numerator: 4, denominator: 4 },
         barlines: {},
+        repeatCounts: {},
         activeStaffId: staff.id,
         selectedStaffIds: [],
         ...selectSingle(null),
@@ -971,7 +999,8 @@ export function historyReducer(history: HistoryState, action: HistoryAction): Hi
   const contentChanged =
     present.staves !== history.present.staves ||
     present.timeSignature !== history.present.timeSignature ||
-    present.barlines !== history.present.barlines
+    present.barlines !== history.present.barlines ||
+    present.repeatCounts !== history.present.repeatCounts
   if (!contentChanged) return { ...history, present }
 
   return {

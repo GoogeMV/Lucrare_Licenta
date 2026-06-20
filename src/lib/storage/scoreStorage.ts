@@ -15,6 +15,8 @@ export interface SavedScore {
   timeSignature: TimeSignature
   /** Bare speciale per index de măsură (repetiții etc.) — pot lipsi din salvări vechi */
   barlines?: Record<number, BarType>
+  /** De câte ori se repetă secțiunea, per măsură cu repeat-end (implicit 2) */
+  repeatCounts?: Record<number, number>
   /** Metadate opționale (adăugate ulterior — pot lipsi din salvările vechi) */
   title?: string
   composer?: string
@@ -40,6 +42,7 @@ export function saveScore(
     tempoText: string
   },
   barlines?: Record<number, BarType>,
+  repeatCounts?: Record<number, number>,
 ): boolean {
   const payload: SavedScore = {
     version: 1,
@@ -47,6 +50,7 @@ export function saveScore(
     staves,
     timeSignature,
     barlines,
+    repeatCounts,
     title: meta?.title,
     composer: meta?.composer,
     tempo: meta?.tempo,
