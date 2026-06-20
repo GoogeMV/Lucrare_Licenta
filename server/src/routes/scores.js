@@ -5,11 +5,16 @@ import {
   createScore,
   updateScore,
   deleteScore,
+  getUserById,
   getUserByEmail,
+  countScores,
   createOrUpdateShare,
   listSharesForScore,
 } from "../store.js"
 import { authMiddleware } from "../auth.js"
+
+// limita planului gratuit pentru partituri salvate în cont (Pro = nelimitat)
+const FREE_SCORE_LIMIT = 3
 
 const router = Router()
 router.use(authMiddleware) // toate rutele de mai jos cer autentificare
@@ -38,12 +43,18 @@ router.get(
   }),
 )
 
-/** Creează o partitură nouă */
+/** Creează o partitură nouă (gratuit: max FREE_SCORE_LIMIT; Pro: nelimitat) */
 router.post(
   "/",
   wrap(async (req, res) => {
     const data = req.body?.data
     if (!data) return res.status(400).json({ error: "Lipsește conținutul partiturii" })
+    const user = await getUserById(req.user.id)
+    if (user.plan !== "pro" && (await countScores(req.user.id)) >= FREE_SCORE_LIMIT) {
+      return res.status(402).json({
+        error: `Planul gratuit permite maximum ${FREE_SCORE_LIMIT} partituri în cont. Treci la Pro pentru nelimitat.`,
+      })
+    }
     const score = await createScore(req.user.id, String(req.body?.title || "Partitură fără titlu"), data)
     res.json({ id: score.id })
   }),
@@ -75,10 +86,15 @@ router.delete(
   }),
 )
 
-/** Partajează partitura :id cu un utilizator (după email), cu portativele alese */
+/** Partajează partitura :id cu un utilizator (după email), cu portativele alese.
+ *  Partajarea granulară e o funcție Pro. */
 router.post(
   "/:id/shares",
   wrap(async (req, res) => {
+    const owner = await getUserById(req.user.id)
+    if (owner.plan !== "pro") {
+      return res.status(402).json({ error: "Partajarea e disponibilă în planul Pro." })
+    }
     const scoreId = Number(req.params.id)
     const score = await getScore(req.user.id, scoreId)
     if (!score) return res.status(404).json({ error: "Partitura nu există" })

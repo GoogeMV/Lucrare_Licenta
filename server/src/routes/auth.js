@@ -31,7 +31,7 @@ router.post(
 
     const user = await createUser(email, hashPassword(password))
     // adminul NU se acordă prin API (fără cale de escaladare) — vezi scriptul `npm run admin`
-    res.json({ token: signToken(user), user: { id: user.id, email: user.email, isAdmin: false } })
+    res.json({ token: signToken(user), user: { id: user.id, email: user.email, isAdmin: false, plan: "free" } })
   }),
 )
 
@@ -46,7 +46,10 @@ router.post(
       return res.status(401).json({ error: "Email sau parolă greșite" })
     }
     // rolul de admin vine DOAR din DB (setat manual cu scriptul `npm run admin`)
-    res.json({ token: signToken(user), user: { id: user.id, email: user.email, isAdmin: user.is_admin } })
+    res.json({
+      token: signToken(user),
+      user: { id: user.id, email: user.email, isAdmin: user.is_admin, plan: user.plan },
+    })
   }),
 )
 
@@ -58,7 +61,7 @@ router.get(
   wrap(async (req, res) => {
     const user = await getUserById(req.user.id)
     if (!user) return res.status(401).json({ error: "Cont inexistent" })
-    res.json({ user: { id: user.id, email: user.email, isAdmin: user.is_admin } })
+    res.json({ user: { id: user.id, email: user.email, isAdmin: user.is_admin, plan: user.plan } })
   }),
 )
 
@@ -102,7 +105,7 @@ router.put(
     }
 
     const fresh = { id: user.id, email }
-    res.json({ token: signToken(fresh), user: { ...fresh, isAdmin: user.is_admin } })
+    res.json({ token: signToken(fresh), user: { ...fresh, isAdmin: user.is_admin, plan: user.plan } })
   }),
 )
 

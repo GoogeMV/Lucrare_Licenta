@@ -16,10 +16,12 @@ export async function initDb() {
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       is_admin BOOLEAN NOT NULL DEFAULT false,
+      plan TEXT NOT NULL DEFAULT 'free',
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
-    -- pentru baze existente create înainte de coloana is_admin
+    -- pentru baze existente create înainte de coloanele noi
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free';
     CREATE TABLE IF NOT EXISTS scores (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -78,6 +80,13 @@ export async function setUserAdmin(id, value) {
 export async function listAdmins() {
   const { rows } = await pool.query("SELECT id, email FROM users WHERE is_admin = true ORDER BY id")
   return rows
+}
+export async function setUserPlan(id, plan) {
+  await pool.query("UPDATE users SET plan = $1 WHERE id = $2", [plan, id])
+}
+export async function countScores(userId) {
+  const { rows } = await pool.query("SELECT COUNT(*)::int AS n FROM scores WHERE user_id = $1", [userId])
+  return rows[0].n
 }
 
 // --- administrare / statistici ---
