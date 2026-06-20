@@ -35,6 +35,24 @@ npm run admin -- set eu@example.com off   # retrogradează
 npm run admin -- list                     # listează adminii
 ```
 
+## Plăți (Stripe, mod test) — opțional
+
+Upgrade-ul la planul **Pro** folosește Stripe Checkout în **mod test** (carduri de
+test, fără bani reali). Fără chei configurate, rutele `/api/billing` întorc 503, iar
+restul aplicației merge normal (toți rămân pe Free).
+
+Configurare (în `.env`):
+
+```
+STRIPE_SECRET_KEY=sk_test_...     # cheia secretă de TEST din dashboard.stripe.com
+STRIPE_PRICE_ID=price_...         # un Preț ONE-TIME (Product → Price) în mod test
+CLIENT_URL=http://localhost:5173  # de unde vine frontend-ul (pt. redirect succes/anulare)
+```
+
+În Stripe (mod Test): creează un **Product** cu un **Price one-time**, copiază `price_…`
+și cheia secretă `sk_test_…`. Card de test: `4242 4242 4242 4242`, dată viitoare, orice CVC.
+Planurile: **Free** = max 3 partituri în cont, fără partajare; **Pro** = nelimitat + partajare.
+
 Frontend-ul (Vite) proxează automat `/api` către `http://localhost:4000`
 (vezi `vite.config.ts`). Pornește ambele în terminale separate:
 

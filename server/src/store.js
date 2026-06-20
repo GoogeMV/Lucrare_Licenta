@@ -96,6 +96,7 @@ export async function getStats() {
     users: await count("SELECT COUNT(*) FROM users"),
     scores: await count("SELECT COUNT(*) FROM scores"),
     shares: await count("SELECT COUNT(*) FROM shares"),
+    proUsers: await count("SELECT COUNT(*) FROM users WHERE plan = 'pro'"),
     newUsers7d: await count("SELECT COUNT(*) FROM users WHERE created_at > now() - interval '7 days'"),
     newScores7d: await count("SELECT COUNT(*) FROM scores WHERE created_at > now() - interval '7 days'"),
   }
@@ -103,7 +104,7 @@ export async function getStats() {
 /** Toți utilizatorii cu numărul lor de partituri (pentru panoul de admin) */
 export async function listUsersWithCounts() {
   const { rows } = await pool.query(
-    `SELECT u.id, u.email, u.is_admin, u.created_at, COUNT(s.id)::int AS score_count
+    `SELECT u.id, u.email, u.is_admin, u.plan, u.created_at, COUNT(s.id)::int AS score_count
        FROM users u LEFT JOIN scores s ON s.user_id = u.id
       GROUP BY u.id
       ORDER BY u.created_at DESC`,

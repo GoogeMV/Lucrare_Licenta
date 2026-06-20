@@ -5,6 +5,7 @@ import authRoutes from "./routes/auth.js"
 import scoreRoutes from "./routes/scores.js"
 import shareRoutes from "./routes/shares.js"
 import adminRoutes from "./routes/admin.js"
+import billingRoutes from "./routes/billing.js"
 import { initDb } from "./store.js"
 
 const app = express()
@@ -16,6 +17,7 @@ app.use("/api/auth", authRoutes)
 app.use("/api/scores", scoreRoutes)
 app.use("/api/shares", shareRoutes)
 app.use("/api/admin", adminRoutes)
+app.use("/api/billing", billingRoutes)
 
 const PORT = process.env.PORT || 4000
 
