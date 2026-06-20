@@ -1,4 +1,4 @@
-import type { Duration, Staff, TimeSignature } from "@/types/score"
+import type { BarType, Duration, Staff, TimeSignature } from "@/types/score"
 
 /**
  * Persistența partiturii în `localStorage` (un singur slot, versionat).
@@ -13,6 +13,8 @@ export interface SavedScore {
   savedAt: string
   staves: Staff[]
   timeSignature: TimeSignature
+  /** Bare speciale per index de măsură (repetiții etc.) — pot lipsi din salvări vechi */
+  barlines?: Record<number, BarType>
   /** Metadate opționale (adăugate ulterior — pot lipsi din salvările vechi) */
   title?: string
   composer?: string
@@ -37,12 +39,14 @@ export function saveScore(
     tempoBeatDotted: boolean
     tempoText: string
   },
+  barlines?: Record<number, BarType>,
 ): boolean {
   const payload: SavedScore = {
     version: 1,
     savedAt: new Date().toISOString(),
     staves,
     timeSignature,
+    barlines,
     title: meta?.title,
     composer: meta?.composer,
     tempo: meta?.tempo,

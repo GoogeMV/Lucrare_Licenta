@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { splitIntoMeasures, decompose } from "@/lib/notation/measure"
+import { splitIntoMeasures, decompose, expandRepeats } from "@/lib/notation/measure"
 import type { NoteEntry } from "@/types/score"
 
 const note = (duration: NoteEntry["duration"], extra: Partial<NoteEntry> = {}): NoteEntry => ({
@@ -8,6 +8,30 @@ const note = (duration: NoteEntry["duration"], extra: Partial<NoteEntry> = {}): 
   pitches: [{ step: "C", octave: 4 }],
   duration,
   ...extra,
+})
+
+describe("expandRepeats", () => {
+  it("fără repetiții, întoarce aceeași listă (referință)", () => {
+    const notes = [note("whole"), note("whole")]
+    expect(expandRepeats(notes, {}, 4)).toBe(notes)
+  })
+
+  it("repeat-end fără început repetă de la prima măsură", () => {
+    // 2 măsuri (note întregi), repeat-end pe măsura 1 → m0,m1,m0,m1
+    const notes = [note("whole"), note("whole")]
+    const out = expandRepeats(notes, { 1: "repeat-end" }, 4)
+    expect(out).toHaveLength(4)
+    expect(out.map((n) => n.id)).toEqual([notes[0].id, notes[1].id, notes[0].id, notes[1].id])
+  })
+
+  it("repeat-begin…repeat-end repetă doar secțiunea dintre ele", () => {
+    // 3 măsuri; repetăm doar 1..2 → m0, m1, m2, m1, m2
+    const notes = [note("whole"), note("whole"), note("whole")]
+    const out = expandRepeats(notes, { 1: "repeat-begin", 2: "repeat-end" }, 4)
+    expect(out.map((n) => n.id)).toEqual([
+      notes[0].id, notes[1].id, notes[2].id, notes[1].id, notes[2].id,
+    ])
+  })
 })
 
 describe("splitIntoMeasures", () => {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import {
   Renderer,
+  Barline,
   Stave,
   StaveNote,
   Voice,
@@ -21,7 +22,7 @@ import {
 import { useScoreEditor, type Theme } from "@/state/scoreEditorContext"
 import { buildStaffPositions, pitchIndex, pitchToVexflowKey, semitoneToPitch, TOP_LINE_PITCH } from "@/lib/notation/pitch"
 import { DURATION_HOTKEYS, REST_HOTKEYS, entryBeats, playbackQuarterBpm, tupletNormal, vexflowDurationCode } from "@/lib/notation/duration"
-import { splitIntoMeasures, type MeasureFragment } from "@/lib/notation/measure"
+import { splitIntoMeasures, expandRepeats, type MeasureFragment } from "@/lib/notation/measure"
 import { ACCIDENTAL_HOTKEYS, ACCIDENTAL_TO_VEXFLOW } from "@/lib/notation/accidental"
 import { ARTICULATION_TO_VEXFLOW } from "@/lib/notation/articulation"
 import { keyAccidentalCount } from "@/lib/notation/keySignature"
@@ -31,7 +32,7 @@ import { onPlaybackHighlight, emitPlaybackHighlight } from "@/lib/audio/playback
 import { auditionPitches, stopAudition } from "@/lib/audio/audition"
 import { onMidiNoteOn, onMidiNoteOff } from "@/lib/midi/midiInput"
 import { measureQuarters, timeSignatureLabel } from "@/lib/notation/timeSignature"
-import type { Clef, NoteEntry, Pitch, Step } from "@/types/score"
+import type { BarType, Clef, NoteEntry, Pitch, Step } from "@/types/score"
 
 const STAVE_GRADIENT_ID = "stave-cream-to-gold"
 const SVG_NS = "http://www.w3.org/2000/svg"
@@ -129,6 +130,15 @@ const LYRIC_CLEARANCE = 28 // spațiu sub cea mai joasă notă cu vers; ≈OFFSE
 // italic, ca în partiturile gravate clasic
 const SHEET_FONT = "'Edwin', serif"
 
+/** Aplică bara specială a unei măsuri pe un Stave/TabStave (repeat-begin = stânga,
+ *  restul = dreapta). Bara simplă implicită rămâne neatinsă. */
+function applyBarline(stave: Stave, bar: BarType | undefined) {
+  if (bar === "repeat-begin") stave.setBegBarType(Barline.type.REPEAT_BEGIN)
+  else if (bar === "repeat-end") stave.setEndBarType(Barline.type.REPEAT_END)
+  else if (bar === "double") stave.setEndBarType(Barline.type.DOUBLE)
+  else if (bar === "final") stave.setEndBarType(Barline.type.END)
+}
+
 /** Găsește cel mai apropiat strămoș care derulează (overflow-y auto/scroll) */
 function findScrollParent(el: HTMLElement | null): HTMLElement | null {
   let node = el?.parentElement ?? null
@@ -187,6 +197,7 @@ export function InteractiveStave() {
     selectedDuration,
     viewMode,
     meta,
+    barlines,
     mixer,
     theme,
     player,
@@ -457,6 +468,7 @@ export function InteractiveStave() {
           // --- sub-portativ de NOTAȚIE ---
           if (showNotation) {
           const stave = new Stave(x, staffY, measureWidth)
+          applyBarline(stave, barlines[measureIndex])
           if (isFirstOfSystem) {
             stave.addClef(staff.clef)
             if (staff.keySignature !== "C") stave.addKeySignature(staff.keySignature)
@@ -617,6 +629,7 @@ export function InteractiveStave() {
           // --- sub-portativ de TAB (tablatură) ---
           if (showTab) {
             const tabStave = new TabStave(x, staffY + tabYOffset, measureWidth, { numLines: stringCount })
+            applyBarline(tabStave, barlines[measureIndex])
             if (isFirstOfSystem) {
               tabStave.addClef("tab")
               firstTabStaveOfRow = tabStave
@@ -1232,7 +1245,7 @@ export function InteractiveStave() {
     if (container.scrollLeft !== savedScrollLeft) {
       container.scrollLeft = savedScrollLeft
     }
-  }, [staves, activeStaffId, selectedStaffIds, timeSignature, selectedId, selectedIds, selectedPitchIndex, viewMode, lyricMode, theme, dispatch])
+  }, [staves, activeStaffId, selectedStaffIds, timeSignature, barlines, selectedId, selectedIds, selectedPitchIndex, viewMode, lyricMode, theme, dispatch])
 
   useEffect(() => {
     draw()
@@ -1545,8 +1558,10 @@ export function InteractiveStave() {
             ? staves.filter((s) => selectedStaffIds.includes(s.id))
             : staves
           if (played.length === 0) return
+          // toată piesa → extindem repetițiile (notele selectate, în schimb, nu)
+          const beatsPerMeasure = measureQuarters(timeSignature)
           parts = played.map((s) => ({
-            notes: s.notes,
+            notes: expandRepeats(s.notes, barlines, beatsPerMeasure),
             keySignature: s.keySignature,
             instrument: s.instrument,
             volume: mixer[s.id]?.volume ?? 1,
@@ -1734,6 +1749,8 @@ export function InteractiveStave() {
     noteInputMode,
     lyricMode,
     mixer,
+    timeSignature,
+    barlines,
     meta.tempo,
     meta.tempoBeat,
     meta.tempoBeatDotted,

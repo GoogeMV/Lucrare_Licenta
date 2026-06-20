@@ -15,7 +15,7 @@ export type SaveResult = "cloud" | "local" | "skip"
  */
 export function useSaveScore() {
   const { user } = useAuth()
-  const { staves, timeSignature, meta, currentScoreId, setCurrentScoreId } = useScoreEditor()
+  const { staves, timeSignature, barlines, meta, currentScoreId, setCurrentScoreId } = useScoreEditor()
 
   return async function save(options: { allowCreate?: boolean } = {}): Promise<SaveResult> {
     const hasNotes = staves.some((s) => s.notes.length > 0)
@@ -25,6 +25,7 @@ export function useSaveScore() {
     const data = {
       staves,
       timeSignature,
+      barlines,
       title: meta.title,
       composer: meta.composer,
       tempo: meta.tempo,
@@ -46,14 +47,19 @@ export function useSaveScore() {
     }
 
     // nelogat, sau autosave fără partitură-cloud curentă → backup local
-    saveScore(staves, timeSignature, {
-      title: meta.title,
-      composer: meta.composer,
-      tempo: meta.tempo,
-      tempoBeat: meta.tempoBeat,
-      tempoBeatDotted: meta.tempoBeatDotted,
-      tempoText: meta.tempoText,
-    })
+    saveScore(
+      staves,
+      timeSignature,
+      {
+        title: meta.title,
+        composer: meta.composer,
+        tempo: meta.tempo,
+        tempoBeat: meta.tempoBeat,
+        tempoBeatDotted: meta.tempoBeatDotted,
+        tempoText: meta.tempoText,
+      },
+      barlines,
+    )
     return "local"
   }
 }

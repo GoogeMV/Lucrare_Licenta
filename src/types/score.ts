@@ -79,6 +79,14 @@ export interface Slur {
 /** Cheia portativului — determină poziția înălțimilor pe linii */
 export type Clef = "treble" | "bass" | "alto"
 
+/**
+ * Tipul de bară special atașat unei măsuri (global, ca indicația de măsură):
+ *  - `repeat-begin` se desenează la ÎNCEPUTUL (stânga) măsurii (`‖:`);
+ *  - `repeat-end` / `double` / `final` la SFÂRȘITUL (dreapta) măsurii.
+ * Bara simplă (implicită, între măsuri) nu se stochează.
+ */
+export type BarType = "double" | "final" | "repeat-begin" | "repeat-end"
+
 /** Modul de afișare al unui portativ de chitară: notație, tablatură sau ambele */
 export type StaffDisplay = "notation" | "tab" | "both"
 

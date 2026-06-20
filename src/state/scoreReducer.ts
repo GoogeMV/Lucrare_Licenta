@@ -1,6 +1,7 @@
 import type {
   Accidental,
   Articulation,
+  BarType,
   Clef,
   Duration,
   Dynamic,
@@ -13,9 +14,10 @@ import type {
   TimeSignature,
 } from "@/types/score"
 import { nearestPitchWithStep, pitchIndex, pitchSemitone, semitoneToPitch, stepDown, stepUp } from "@/lib/notation/pitch"
-import { smallerDuration } from "@/lib/notation/duration"
+import { entryBeats, smallerDuration } from "@/lib/notation/duration"
 import { clefsForInstrument } from "@/lib/notation/instrument"
 import { decompose } from "@/lib/notation/measure"
+import { measureQuarters } from "@/lib/notation/timeSignature"
 import { tabPosition, tuningForInstrument } from "@/lib/notation/tab"
 
 /**
@@ -124,6 +126,9 @@ export interface ScoreState {
   selectedPitchIndex: number | null
   /** Durata curentă de input — folosită la adăugarea/inserarea de note noi */
   selectedDuration: Duration
+  /** Bare speciale per index de măsură (repetiții, bară finală/dublă). Global,
+   *  ca indicația de măsură. Lipsă/absent = bară simplă implicită. */
+  barlines: Record<number, BarType>
 }
 
 export type ScoreAction =
@@ -157,13 +162,14 @@ export type ScoreAction =
   | { type: "setStaffDisplay"; staffId: string; display: StaffDisplay }
   | { type: "setFret"; fret: number }
   | { type: "setTimeSignature"; timeSignature: TimeSignature }
+  | { type: "setBarline"; barType: BarType }
   | { type: "addStaff"; instrument: string }
   | { type: "removeStaff"; staffId: string }
   | { type: "setActiveStaff"; staffId: string }
   | { type: "toggleStaffSelection"; staffId: string }
   | { type: "clearStaffSelection" }
   | { type: "deleteSelected" }
-  | { type: "loadScore"; staves: Staff[]; timeSignature: TimeSignature }
+  | { type: "loadScore"; staves: Staff[]; timeSignature: TimeSignature; barlines?: Record<number, BarType> }
   | { type: "newScore" }
 
 export const initialScoreState: ScoreState = {
@@ -176,6 +182,7 @@ export const initialScoreState: ScoreState = {
   selectionAnchorId: null,
   selectedPitchIndex: null,
   selectedDuration: "quarter",
+  barlines: {},
 }
 
 /**
@@ -744,6 +751,27 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
     case "setTimeSignature":
       return { ...state, timeSignature: action.timeSignature }
 
+    case "setBarline": {
+      // bara se atașează măsurii notei selectate; re-aplicarea aceluiași tip o scoate
+      if (!state.selectedId) return state
+      const staff = staffOfNote(state, state.selectedId)
+      if (!staff) return state
+      const beatsPerMeasure = measureQuarters(state.timeSignature)
+      let beat = 0
+      let measureIndex = 0
+      for (const n of staff.notes) {
+        if (n.id === state.selectedId) {
+          measureIndex = Math.floor(beat / beatsPerMeasure + 1e-9)
+          break
+        }
+        beat += entryBeats(n)
+      }
+      const barlines = { ...state.barlines }
+      if (barlines[measureIndex] === action.barType) delete barlines[measureIndex]
+      else barlines[measureIndex] = action.barType
+      return { ...state, barlines }
+    }
+
     case "addStaff": {
       // instrumentele cu portativ dublu (pian/orgă) adaugă două portative legate
       // printr-o acoladă (același `groupId`); restul, unul singur
@@ -859,6 +887,7 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
         ...state,
         staves: action.staves,
         timeSignature: action.timeSignature,
+        barlines: action.barlines ?? {},
         activeStaffId: action.staves[0].id,
         selectedStaffIds: [],
         ...selectSingle(null),
@@ -878,6 +907,7 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
         ...state,
         staves: [staff],
         timeSignature: { numerator: 4, denominator: 4 },
+        barlines: {},
         activeStaffId: staff.id,
         selectedStaffIds: [],
         ...selectSingle(null),
@@ -939,7 +969,9 @@ export function historyReducer(history: HistoryState, action: HistoryAction): Hi
   if (present === history.present) return history
 
   const contentChanged =
-    present.staves !== history.present.staves || present.timeSignature !== history.present.timeSignature
+    present.staves !== history.present.staves ||
+    present.timeSignature !== history.present.timeSignature ||
+    present.barlines !== history.present.barlines
   if (!contentChanged) return { ...history, present }
 
   return {

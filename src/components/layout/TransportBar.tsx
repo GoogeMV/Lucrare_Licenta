@@ -5,6 +5,8 @@ import { NoteValueIcon } from "@/components/notation/NoteValueIcon"
 import { Play, Pause, RotateCcw, Loader2, SlidersHorizontal, Volume2, VolumeX } from "lucide-react"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { playbackQuarterBpm } from "@/lib/notation/duration"
+import { expandRepeats } from "@/lib/notation/measure"
+import { measureQuarters } from "@/lib/notation/timeSignature"
 import { Metronome } from "@/lib/audio/metronome"
 import { emitPlaybackHighlight } from "@/lib/audio/playbackHighlight"
 
@@ -22,6 +24,7 @@ export function TransportBar() {
     activeStaffId,
     selectedStaffIds,
     timeSignature,
+    barlines,
     meta,
     setMeta,
     mixer,
@@ -94,9 +97,11 @@ export function TransportBar() {
     // redă doar portativele bifate (Ctrl+click); fără bifare, redă toate
     const played =
       selectedStaffIds.length > 0 ? staves.filter((s) => selectedStaffIds.includes(s.id)) : staves
-    // fiecare portativ își duce propria armură, timbrul și reglajul de mixer
+    // fiecare portativ își duce propria armură, timbrul și reglajul de mixer;
+    // repetițiile se extind (secțiunile se redau de două ori)
+    const beatsPerMeasure = measureQuarters(timeSignature)
     const parts = played.map((s) => ({
-      notes: s.notes,
+      notes: expandRepeats(s.notes, barlines, beatsPerMeasure),
       keySignature: s.keySignature,
       instrument: s.instrument,
       volume: mixer[s.id]?.volume ?? 1,

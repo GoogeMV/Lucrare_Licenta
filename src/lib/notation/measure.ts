@@ -1,4 +1,4 @@
-import type { Duration, EntryType } from "@/types/score"
+import type { BarType, Duration, EntryType, NoteEntry } from "@/types/score"
 import { entryBeats } from "@/lib/notation/duration"
 
 /**
@@ -128,4 +128,47 @@ export function splitIntoMeasures(
   if (current.length > 0) flush()
   if (measures.length === 0) measures.push([])
   return measures
+}
+
+/**
+ * Pentru REDARE: extinde repetițiile dintr-o listă de note, dublând secțiunile
+ * dintre `repeat-begin` și `repeat-end` (un nivel, fără volte/nested). Fără
+ * repetiții, întoarce lista NESCHIMBATĂ (aceeași referință). Intrările sunt
+ * grupate pe măsura în care ÎNCEP; o repetiție readuce pointer-ul la ultima
+ * `repeat-begin` (sau la început), o singură dată per `repeat-end`.
+ */
+export function expandRepeats(
+  entries: NoteEntry[],
+  barlines: Record<number, BarType> | undefined,
+  beatsPerMeasure: number,
+): NoteEntry[] {
+  if (!barlines) return entries
+  const hasRepeat = Object.values(barlines).some((b) => b === "repeat-begin" || b === "repeat-end")
+  if (!hasRepeat || entries.length === 0) return entries
+
+  // grupăm intrările pe măsura de început
+  const byMeasure: NoteEntry[][] = []
+  let beat = 0
+  for (const e of entries) {
+    const m = Math.floor(beat / beatsPerMeasure + 1e-9)
+    ;(byMeasure[m] ??= []).push(e)
+    beat += entryBeats(e)
+  }
+  const total = byMeasure.length
+
+  const out: NoteEntry[] = []
+  const consumed = new Set<number>() // repeat-end deja luate (evită bucla infinită)
+  let repeatStart = 0
+  let i = 0
+  while (i < total) {
+    if (barlines[i] === "repeat-begin") repeatStart = i
+    for (const e of byMeasure[i] ?? []) out.push(e)
+    if (barlines[i] === "repeat-end" && !consumed.has(i)) {
+      consumed.add(i)
+      i = repeatStart
+      continue
+    }
+    i++
+  }
+  return out
 }

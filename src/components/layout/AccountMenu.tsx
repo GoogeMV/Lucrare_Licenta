@@ -8,6 +8,7 @@ import { api } from "@/lib/api/client"
 import { AuthModal } from "@/components/layout/AuthModal"
 import { AccountSettingsModal } from "@/components/layout/AccountSettingsModal"
 import { ShareModal } from "@/components/layout/ShareModal"
+import { UpgradeButton } from "@/components/layout/UpgradeButton"
 import type { Staff, TimeSignature } from "@/types/score"
 
 const MENU_ITEM_CLASS =
@@ -30,6 +31,7 @@ interface SharedListItem {
 interface CloudScoreData {
   staves: Staff[]
   timeSignature: TimeSignature
+  barlines?: Record<number, import("@/types/score").BarType>
   title: string
   composer: string
   tempo: number
@@ -99,7 +101,7 @@ export function AccountMenu() {
         shared: { title: string; owner: string; data: CloudScoreData }
       }>(`/shares/${shareId}`)
       const d = s.data
-      dispatch({ type: "loadScore", staves: d.staves, timeSignature: d.timeSignature })
+      dispatch({ type: "loadScore", staves: d.staves, timeSignature: d.timeSignature, barlines: d.barlines })
       setMeta({
         title: d.title ?? "",
         composer: d.composer ?? "",
@@ -131,7 +133,7 @@ export function AccountMenu() {
     try {
       const { score } = await api<{ score: { data: CloudScoreData } }>(`/scores/${id}`)
       const d = score.data
-      dispatch({ type: "loadScore", staves: d.staves, timeSignature: d.timeSignature })
+      dispatch({ type: "loadScore", staves: d.staves, timeSignature: d.timeSignature, barlines: d.barlines })
       setMeta({
         title: d.title ?? "",
         composer: d.composer ?? "",
@@ -181,6 +183,17 @@ export function AccountMenu() {
       </Button>
       {open && (
         <div className="absolute top-full right-0 z-50 mt-1 w-64 rounded-md border border-border bg-surface p-1 shadow-lg">
+          <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+            <span className="text-xs text-foreground-muted">
+              Plan:{" "}
+              <span className={user.plan === "pro" ? "font-medium text-primary" : "text-foreground"}>
+                {user.plan === "pro" ? "Pro ✨" : "Free"}
+              </span>
+            </span>
+            {user.plan !== "pro" && <UpgradeButton />}
+          </div>
+          <div className="my-1 border-t border-border" />
+
           <button type="button" className={MENU_ITEM_CLASS} onClick={handleSave}>
             <Save className="size-4" /> Salvează în cont
           </button>

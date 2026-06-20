@@ -6,6 +6,7 @@ import { NoteToolbar } from "@/components/layout/NoteToolbar"
 import { TransportBar } from "@/components/layout/TransportBar"
 import { HelpOverlay } from "@/components/layout/HelpOverlay"
 import { AutoSave } from "@/components/layout/AutoSave"
+import { BillingReturn } from "@/components/layout/BillingReturn"
 import { LoginPage } from "@/components/layout/LoginPage"
 import { ScoreEditorProvider } from "@/state/scoreEditorContext"
 import { AuthProvider, useAuth } from "@/state/authContext"
@@ -24,6 +25,7 @@ function EditorApp() {
         <TransportBar />
         <HelpOverlay />
         <AutoSave />
+        <BillingReturn />
       </div>
     </ScoreEditorProvider>
   )

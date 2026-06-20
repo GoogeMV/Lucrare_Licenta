@@ -10,7 +10,9 @@ import {
   DURATION_HOTKEY_LABELS,
   DURATION_LABELS,
   DURATIONS,
+  entryBeats,
 } from "@/lib/notation/duration"
+import { measureQuarters } from "@/lib/notation/timeSignature"
 import { NoteValueIcon } from "@/components/notation/NoteValueIcon"
 import {
   ACCIDENTAL_HOTKEY_LABELS,
@@ -23,7 +25,7 @@ import {
   ARTICULATIONS,
 } from "@/lib/notation/articulation"
 import { DYNAMIC_LABELS, DYNAMICS } from "@/lib/notation/dynamics"
-import type { Accidental, Duration } from "@/types/score"
+import type { Accidental, BarType, Duration } from "@/types/score"
 
 /** Clasa de bază a unui buton din toolbar */
 const TOOL_BUTTON_CLASS =
@@ -160,6 +162,69 @@ function DynamicsGroup() {
   )
 }
 
+const BAR_OPTIONS: { type: BarType; symbol: string; label: string }[] = [
+  { type: "repeat-begin", symbol: "𝄆", label: "Început repetiție" },
+  { type: "repeat-end", symbol: "𝄇", label: "Sfârșit repetiție" },
+  { type: "double", symbol: "𝄁", label: "Bară dublă" },
+  { type: "final", symbol: "𝄂", label: "Bară finală" },
+]
+
+/**
+ * Grupul de bare: atașează măsurii notei selectate o bară specială (repetiție,
+ * bară dublă/finală). Reapăsarea aceluiași tip o elimină. Repetițiile se aud la
+ * redarea întregii piese (secțiunea se redă de două ori).
+ */
+function BarlineGroup() {
+  const { staves, selectedId, timeSignature, barlines, dispatch } = useScoreEditor()
+  const disabled = !selectedId
+
+  // bara măsurii notei selectate — pentru evidențierea butonului activ
+  let activeBar: BarType | undefined
+  if (selectedId) {
+    const staff = staves.find((s) => s.notes.some((n) => n.id === selectedId))
+    if (staff) {
+      const beatsPerMeasure = measureQuarters(timeSignature)
+      let beat = 0
+      for (const n of staff.notes) {
+        if (n.id === selectedId) {
+          activeBar = barlines[Math.floor(beat / beatsPerMeasure + 1e-9)]
+          break
+        }
+        beat += entryBeats(n)
+      }
+    }
+  }
+
+  return (
+    <div>
+      <h3 className="mb-1.5 text-[11px] font-medium text-foreground-muted">Bare</h3>
+      <div className="grid grid-cols-2 gap-1.5">
+        {BAR_OPTIONS.map(({ type, symbol, label }) => {
+          const active = type === activeBar
+          return (
+            <Tooltip key={type}>
+              <TooltipTrigger
+                disabled={disabled}
+                onClick={() => dispatch({ type: "setBarline", barType: type })}
+                className={cn(
+                  "flex h-9 items-center justify-center rounded-md border text-lg transition-colors",
+                  active
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border bg-surface-hover text-foreground hover:border-primary/60 hover:text-primary",
+                  DISABLED_BUTTON_CLASS,
+                )}
+              >
+                {symbol}
+              </TooltipTrigger>
+              <TooltipContent>{label} — pe măsura notei selectate</TooltipContent>
+            </Tooltip>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 /**
  * Grupul de durate este "viu": durata aleasă aici devine durata curentă de
  * input și, dacă există o intrare selectată, îi schimbă imediat durata.
@@ -240,6 +305,8 @@ export function NoteToolbar() {
       <ArticulationGroup />
       <Separator />
       <DynamicsGroup />
+      <Separator />
+      <BarlineGroup />
     </aside>
   )
 }

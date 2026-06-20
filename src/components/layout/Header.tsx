@@ -4,6 +4,7 @@ import { BookOpen, Check, ChevronDown, HelpCircle, MoveHorizontal, Palette, Redo
 import { TOGGLE_HELP_EVENT } from "@/components/layout/HelpOverlay"
 import { AccountMenu } from "@/components/layout/AccountMenu"
 import { MidiButton } from "@/components/layout/MidiButton"
+import { AdminButton } from "@/components/layout/AdminButton"
 import { useScoreEditor } from "@/state/scoreEditorContext"
 import { saveScore, loadScore, hasSavedScore } from "@/lib/storage/scoreStorage"
 import { scoreToMusicXML } from "@/lib/export/musicxml"
@@ -55,7 +56,7 @@ const MENU_ITEM_CLASS =
  * Dropdown minimal, închis la click în afara lui.
  */
 function FileMenu() {
-  const { staves, timeSignature, meta, setMeta, dispatch, setCurrentScoreId } = useScoreEditor()
+  const { staves, timeSignature, barlines, meta, setMeta, dispatch, setCurrentScoreId } = useScoreEditor()
   const [open, setOpen] = useState(false)
   const [justSaved, setJustSaved] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -72,7 +73,7 @@ function FileMenu() {
   }, [open])
 
   function handleSave() {
-    const ok = saveScore(staves, timeSignature, meta)
+    const ok = saveScore(staves, timeSignature, meta, barlines)
     setOpen(false)
     if (ok) {
       // feedback scurt pe buton: "✓ Salvat"
@@ -86,7 +87,7 @@ function FileMenu() {
     setOpen(false)
     if (!saved) return
     if (!window.confirm("Înlocuiești partitura curentă cu cea salvată?")) return
-    dispatch({ type: "loadScore", staves: saved.staves, timeSignature: saved.timeSignature })
+    dispatch({ type: "loadScore", staves: saved.staves, timeSignature: saved.timeSignature, barlines: saved.barlines })
     setMeta({
       title: saved.title ?? "",
       composer: saved.composer ?? "",
@@ -439,6 +440,7 @@ export function Header() {
           Temă: {THEME_LABELS[theme]}
         </Button>
         <MidiButton />
+        <AdminButton />
         <Button
           variant="ghost"
           size="icon"

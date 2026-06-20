@@ -4,6 +4,10 @@ import { api, getAuthToken, setAuthToken } from "@/lib/api/client"
 export interface AuthUser {
   id: number
   email: string
+  /** Rol de admin (is_admin) — afișează panoul de administrare */
+  isAdmin?: boolean
+  /** Planul de abonament: "free" (cu limite) sau "pro" (nelimitat + partajare) */
+  plan?: "free" | "pro"
 }
 
 interface AuthValue {
@@ -23,6 +27,8 @@ interface AuthValue {
   ) => Promise<void>
   /** Șterge contul curent (cere parola) și deconectează. */
   deleteAccount: (password: string) => Promise<void>
+  /** Reîncarcă datele contului din `/auth/me` (ex. după upgrade la Pro). */
+  refreshUser: () => Promise<void>
   logout: () => void
 }
 
@@ -96,6 +102,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
   }
 
+  async function refreshUser() {
+    try {
+      const data = await api<{ user: AuthUser }>("/auth/me")
+      setUser(data.user)
+    } catch {
+      /* ignorăm — păstrăm userul curent */
+    }
+  }
+
   function logout() {
     setAuthToken(null)
     setUser(null)
@@ -113,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         register,
         updateAccount,
         deleteAccount,
+        refreshUser,
         logout,
       }}
     >

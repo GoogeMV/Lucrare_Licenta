@@ -45,6 +45,18 @@ describe("intrare MIDI (insertNoteWithPitch + addPitchToSelectedNote)", () => {
   })
 })
 
+describe("setBarline", () => {
+  it("atașează bara măsurii notei selectate și o scoate la re-aplicare", () => {
+    let s = scoreReducer(initialScoreState, { type: "selectNote", id: firstId })
+    s = scoreReducer(s, { type: "setBarline", barType: "repeat-end" })
+    // prima notă e în măsura 0
+    expect(s.barlines[0]).toBe("repeat-end")
+    // re-aplicarea aceluiași tip o elimină (toggle)
+    s = scoreReducer(s, { type: "setBarline", barType: "repeat-end" })
+    expect(s.barlines[0]).toBeUndefined()
+  })
+})
+
 describe("toggleRest", () => {
   it("comută nota în pauză și înapoi", () => {
     let s = scoreReducer(initialScoreState, { type: "selectNote", id: firstId })
