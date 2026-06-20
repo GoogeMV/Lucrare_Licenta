@@ -15,8 +15,11 @@ export async function initDb() {
       id SERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
+      is_admin BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    -- pentru baze existente create înainte de coloana is_admin
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false;
     CREATE TABLE IF NOT EXISTS scores (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -68,6 +71,35 @@ export async function updateUserPassword(id, passwordHash) {
 export async function deleteUser(id) {
   // partiturile dispar prin ON DELETE CASCADE
   await pool.query("DELETE FROM users WHERE id = $1", [id])
+}
+export async function setUserAdmin(id, value) {
+  await pool.query("UPDATE users SET is_admin = $1 WHERE id = $2", [value, id])
+}
+export async function listAdmins() {
+  const { rows } = await pool.query("SELECT id, email FROM users WHERE is_admin = true ORDER BY id")
+  return rows
+}
+
+// --- administrare / statistici ---
+export async function getStats() {
+  const count = (sql) => pool.query(sql).then((r) => Number(r.rows[0].count))
+  return {
+    users: await count("SELECT COUNT(*) FROM users"),
+    scores: await count("SELECT COUNT(*) FROM scores"),
+    shares: await count("SELECT COUNT(*) FROM shares"),
+    newUsers7d: await count("SELECT COUNT(*) FROM users WHERE created_at > now() - interval '7 days'"),
+    newScores7d: await count("SELECT COUNT(*) FROM scores WHERE created_at > now() - interval '7 days'"),
+  }
+}
+/** Toți utilizatorii cu numărul lor de partituri (pentru panoul de admin) */
+export async function listUsersWithCounts() {
+  const { rows } = await pool.query(
+    `SELECT u.id, u.email, u.is_admin, u.created_at, COUNT(s.id)::int AS score_count
+       FROM users u LEFT JOIN scores s ON s.user_id = u.id
+      GROUP BY u.id
+      ORDER BY u.created_at DESC`,
+  )
+  return rows
 }
 
 // --- partituri ---

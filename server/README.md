@@ -24,7 +24,16 @@ npm run dev            # node --watch src/index.js  → http://localhost:4000
 ```
 
 `DATABASE_URL` are forma `postgresql://utilizator:parolă@localhost:5432/notationsoft`.
-La prima pornire se creează tabelele `users` și `scores`.
+La prima pornire se creează tabelele `users`, `scores` și `shares`.
+
+**Admin** (panou de statistici + utilizatori) — rolul `is_admin` se setează MANUAL,
+pe server, niciodată prin API (fără cale de escaladare). Contul trebuie să existe deja:
+
+```bash
+npm run admin -- set eu@example.com on    # promovează
+npm run admin -- set eu@example.com off   # retrogradează
+npm run admin -- list                     # listează adminii
+```
 
 Frontend-ul (Vite) proxează automat `/api` către `http://localhost:4000`
 (vezi `vite.config.ts`). Pornește ambele în terminale separate:

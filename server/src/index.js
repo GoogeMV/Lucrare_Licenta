@@ -4,6 +4,7 @@ import cors from "cors"
 import authRoutes from "./routes/auth.js"
 import scoreRoutes from "./routes/scores.js"
 import shareRoutes from "./routes/shares.js"
+import adminRoutes from "./routes/admin.js"
 import { initDb } from "./store.js"
 
 const app = express()
@@ -14,6 +15,7 @@ app.get("/api/health", (_req, res) => res.json({ ok: true }))
 app.use("/api/auth", authRoutes)
 app.use("/api/scores", scoreRoutes)
 app.use("/api/shares", shareRoutes)
+app.use("/api/admin", adminRoutes)
 
 const PORT = process.env.PORT || 4000
 
