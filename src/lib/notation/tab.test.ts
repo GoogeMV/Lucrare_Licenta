@@ -4,8 +4,10 @@ import {
   stringCountForInstrument,
   openStringPitch,
   tabPosition,
+  tabPositionsForChord,
   pitchForStringFret,
 } from "@/lib/notation/tab"
+import type { Pitch } from "@/types/score"
 
 describe("supportsTab", () => {
   it("doar chitarele suportă TAB", () => {
@@ -37,5 +39,35 @@ describe("tabPosition / pitchForStringFret", () => {
     const pitch = pitchForStringFret("Chitară", 2, 3) // coarda 2 (Si3) + 3 = Re4
     expect(pitch).toMatchObject({ step: "D", octave: 4, string: 2 })
     expect(tabPosition(pitch, "Chitară")).toEqual({ str: 2, fret: 3 })
+  })
+})
+
+describe("tabPositionsForChord", () => {
+  it("un acord primește corzi DISTINCTE (fără suprapunere)", () => {
+    // Do major: Do4, Mi4, Sol4 — fără mapare per-notă ar coincide pe coarda 1
+    const chord: Pitch[] = [
+      { step: "C", octave: 4 },
+      { step: "E", octave: 4 },
+      { step: "G", octave: 4 },
+    ]
+    const pos = tabPositionsForChord(chord, "Chitară")
+    const strings = pos.map((p) => p.str)
+    expect(new Set(strings).size).toBe(3) // toate distincte
+    pos.forEach((p) => expect(p.fret).toBeGreaterThanOrEqual(0))
+  })
+
+  it("o singură notă e identică cu tabPosition", () => {
+    const p: Pitch = { step: "E", octave: 4 }
+    expect(tabPositionsForChord([p], "Chitară")).toEqual([tabPosition(p, "Chitară")])
+  })
+
+  it("onorează coarda aleasă explicit", () => {
+    const chord: Pitch[] = [
+      { step: "E", octave: 4 }, // implicit ar fi coarda 1
+      { step: "B", octave: 3, string: 2 }, // forțat pe coarda 2
+    ]
+    const pos = tabPositionsForChord(chord, "Chitară")
+    expect(pos[1]).toEqual({ str: 2, fret: 0 })
+    expect(pos[0].str).not.toBe(2)
   })
 })

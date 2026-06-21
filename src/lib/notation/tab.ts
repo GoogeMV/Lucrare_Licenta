@@ -78,6 +78,59 @@ export function tabPosition(pitch: Pitch, instrument: string): { str: number; fr
 }
 
 /**
+ * Pozițiile (coardă, fret) pentru TOATE notele unui acord, garantând corzi
+ * DISTINCTE — altfel două note s-ar desena pe aceeași coardă (suprapunere).
+ * Onorăm întâi corzile alese explicit, apoi mapăm restul de la cea mai înaltă
+ * la cea mai joasă pe prima coardă liberă jucabilă (subțiri → înalte, groase →
+ * joase). Rezultatul păstrează ordinea din `pitches`. Pentru o singură notă e
+ * identic cu `tabPosition`.
+ */
+export function tabPositionsForChord(
+  pitches: Pitch[],
+  instrument: string,
+): { str: number; fret: number }[] {
+  const tuning = tuningForInstrument(instrument).map(pitchSemitone)
+  const used = new Set<number>()
+  const result: ({ str: number; fret: number } | undefined)[] = new Array(pitches.length)
+
+  // 1) corzile alese explicit (dacă nota intră pe ele și coarda e încă liberă)
+  pitches.forEach((p, idx) => {
+    if (p.string && p.string >= 1 && p.string <= tuning.length && !used.has(p.string)) {
+      const fret = pitchSemitone(p) - tuning[p.string - 1]
+      if (fret >= 0 && fret <= MAX_FRET) {
+        result[idx] = { str: p.string, fret }
+        used.add(p.string)
+      }
+    }
+  })
+
+  // 2) restul, de la înalt la jos: prima coardă liberă pe care nota e jucabilă
+  const remaining = pitches
+    .map((p, idx) => ({ p, idx }))
+    .filter(({ idx }) => !result[idx])
+    .sort((a, b) => pitchSemitone(b.p) - pitchSemitone(a.p))
+
+  for (const { p, idx } of remaining) {
+    const semitone = pitchSemitone(p)
+    let assigned: { str: number; fret: number } | null = null
+    for (let i = 0; i < tuning.length; i++) {
+      if (used.has(i + 1)) continue
+      const fret = semitone - tuning[i]
+      if (fret >= 0 && fret <= MAX_FRET) {
+        assigned = { str: i + 1, fret }
+        break
+      }
+    }
+    // degenerat (mai multe note decât corzi libere jucabile): cădem pe auto
+    if (!assigned) assigned = autoPosition(semitone, tuning)
+    result[idx] = assigned
+    used.add(assigned.str)
+  }
+
+  return result as { str: number; fret: number }[]
+}
+
+/**
  * Înălțimea rezultată din apăsarea fret-ului `fret` pe coarda `string` a unui
  * instrument — cu coarda reținută în `string` (ca TAB-ul să rămână pe ea).
  */

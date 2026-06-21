@@ -27,7 +27,7 @@ import { ACCIDENTAL_HOTKEYS, ACCIDENTAL_TO_VEXFLOW } from "@/lib/notation/accide
 import { ARTICULATION_TO_VEXFLOW } from "@/lib/notation/articulation"
 import { keyAccidentalCount } from "@/lib/notation/keySignature"
 import { instrumentLabel } from "@/lib/notation/instrument"
-import { openStringPitch, stringCountForInstrument, supportsTab, tabPosition } from "@/lib/notation/tab"
+import { openStringPitch, stringCountForInstrument, supportsTab, tabPositionsForChord } from "@/lib/notation/tab"
 import { onPlaybackHighlight, emitPlaybackHighlight } from "@/lib/audio/playbackHighlight"
 import { auditionPitches, stopAudition } from "@/lib/audio/audition"
 import { onMidiNoteOn, onMidiNoteOff } from "@/lib/midi/midiInput"
@@ -46,10 +46,14 @@ const SVG_NS = "http://www.w3.org/2000/svg"
 function sheetColors(theme?: Theme) {
   const cs = getComputedStyle(document.documentElement)
   const lightSheet = theme === "light" || theme === "signature-light"
-  const fallback = lightSheet ? { ink: "#1c1c1e", accent: "#b8860b" } : { ink: "#e8dcc8", accent: "#f3c544" }
+  const fallback = lightSheet
+    ? { ink: "#1c1c1e", accent: "#b8860b", sheet: "#ffffff" }
+    : { ink: "#e8dcc8", accent: "#f3c544", sheet: "#1b1b1e" }
   return {
     ink: cs.getPropertyValue("--ink").trim() || fallback.ink,
     accent: cs.getPropertyValue("--ink-accent").trim() || fallback.accent,
+    // fundalul foii — folosit ca „mască" în spatele cifrelor de TAB (clearRect)
+    sheet: cs.getPropertyValue("--sheet").trim() || fallback.sheet,
   }
 }
 
@@ -119,6 +123,7 @@ const LABEL_WIDTH = 64 // gutter în stânga pentru numele instrumentelor
 const STAFF_ROW_HEIGHT = 88 // înălțimea de bază (compactă) a unui portativ; crește dinamic
 const GRAND_STAFF_GAP = 80 // spațiu între portativele aceluiași instrument (pian / notație+TAB)
 const SYSTEM_GAP = 40 // spațiu între sisteme (rânduri)
+const TAB_ROW_EXTRA = 34 // spațiu în plus sub instrumentele cu TAB (altfel se suprapun)
 const STEP_PX = 6 // pixeli per treaptă diatonică (pentru spațierea dinamică)
 const LEDGER_SLACK = 30 // câte linii suplimentare „încap" în spațiul de bază înainte să mărim
 const TOP_MARGIN = 36
@@ -129,6 +134,8 @@ const LYRIC_CLEARANCE = 28 // spațiu sub cea mai joasă notă cu vers; ≈OFFSE
 // fontul de text al partiturii (Edwin, ca în MuseScore) — versurile se desenează
 // italic, ca în partiturile gravate clasic
 const SHEET_FONT = "'Edwin', serif"
+const TAB_FRET_FONT_SIZE = 8 // cifrele de fret în TAB (implicit VexFlow = 9)
+const TAB_CLEF_FONT_SIZE = 24 // clef-ul „TAB" (implicit VexFlow = 30)
 
 /** Aplică bara specială a unei măsuri pe un Stave/TabStave (repeat-begin = stânga,
  *  restul = dreapta). Bara simplă implicită rămâne neatinsă. */
@@ -263,7 +270,7 @@ export function InteractiveStave() {
 
     // culorile notației din tema curentă (citite la fiecare randare → urmează
     // comutarea light/dark); numele rămân INK_COLOR/ACCENT_COLOR în restul randării
-    const { ink: INK_COLOR, accent: ACCENT_COLOR } = sheetColors(theme)
+    const { ink: INK_COLOR, accent: ACCENT_COLOR, sheet: SHEET_BG } = sheetColors(theme)
 
     // golirea containerului (mai jos) colapsează înălțimea la 0, ceea ce face
     // browserul să "prindă" scroll-ul strămoșului la 0; salvăm pozițiile și le
@@ -358,7 +365,10 @@ export function InteractiveStave() {
       const tight = !!next && !!staff.groupId && next.groupId === staff.groupId
       const base = tight ? GRAND_STAFF_GAP : STAFF_ROW_HEIGHT
       const upNext = next ? extentUp[i + 1] : 0
-      if (staffDisplays[i] === "both") return tabOffsets[i] + STAFF_ROW_HEIGHT + upNext
+      // rândul de TAB (6 corzi ≈ 65px) are nevoie de spațiu suplimentar dedesubt,
+      // altfel se suprapune cu portativul instrumentului următor
+      if (staffDisplays[i] === "both") return tabOffsets[i] + STAFF_ROW_HEIGHT + TAB_ROW_EXTRA + upNext
+      if (staffDisplays[i] === "tab") return base + extentDown[i] + TAB_ROW_EXTRA + upNext
       return base + extentDown[i] + upNext
     })
     // offset-ul vertical al fiecărui portativ în cadrul unui sistem
@@ -376,6 +386,9 @@ export function InteractiveStave() {
     const renderer = new Renderer(container, Renderer.Backends.SVG)
     renderer.resize(width, height)
     const context = renderer.getContext()
+    // masca din spatele cifrelor de TAB (clearRect) folosește această culoare —
+    // o punem pe culoarea foii, ca să nu mai iasă dreptunghiuri albe pe tema închisă
+    context.setBackgroundFillStyle(SHEET_BG)
     context.setFont(SHEET_FONT, 10)
 
     const svgEl = container.querySelector<SVGSVGElement>("svg")
@@ -633,6 +646,20 @@ export function InteractiveStave() {
             applyBarline(tabStave, barlines[measureIndex])
             if (isFirstOfSystem) {
               tabStave.addClef("tab")
+              const clefMod = tabStave.getModifiers(undefined, "Clef")[0] as unknown as
+                | { text: string; line: number; fontInfo: { size: number } }
+                | undefined
+              if (clefMod) {
+                // micșorăm clef-ul TAB (implicit 30) ca să stea mai discret
+                clefMod.fontInfo.size = TAB_CLEF_FONT_SIZE
+                // clef-ul TAB implicit e pentru 6 corzi și iese din chenar pe bas
+                // (4 linii); înlocuim cu glyph-ul de 4 corzi (SMuFL fourStringTabClef),
+                // centrat pe mijlocul celor 4 linii (line 1.5)
+                if (stringCount === 4) {
+                  clefMod.text = String.fromCharCode(0xe06e)
+                  clefMod.line = 1.5
+                }
+              }
               firstTabStaveOfRow = tabStave
             }
             context.setStrokeStyle(staveGradient)
@@ -650,8 +677,13 @@ export function InteractiveStave() {
                   // pauzele în TAB: spațiu invizibil (păstrează alinierea pe timpi)
                   return { entry, tabNote: new GhostNote({ duration: vexflowDurationCode(frag.duration, false) }) }
                 }
-                const positions = entry.pitches.map((p) => tabPosition(p, staff.instrument))
+                const positions = tabPositionsForChord(entry.pitches, staff.instrument)
                 const tabNote = new TabNote({ positions, duration: vexflowDurationCode(frag.duration, false) })
+                // micșorăm cifrele de fret (implicit 9) ca să încapă pe portativ —
+                // mai ales la bas (4 corzi); fretElement e protejat, deci acces cu cast
+                ;(tabNote as unknown as { fretElement: { setFont(f?: string, s?: number): void }[] }).fretElement.forEach(
+                  (el) => el.setFont(undefined, TAB_FRET_FONT_SIZE),
+                )
                 if (frag.dotted) Dot.buildAndAttach([tabNote], { all: true })
                 const color = selectedIdSet.has(entry.id) ? ACCENT_COLOR : INK_COLOR
                 tabNote.setStyle({ fillStyle: color, strokeStyle: color })
