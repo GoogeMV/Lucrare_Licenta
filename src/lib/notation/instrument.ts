@@ -21,6 +21,11 @@ export const INSTRUMENT_CLEFS: Record<string, Clef> = {
   Pian: "treble",
   "Pian electric": "treble",
   Orgă: "treble",
+  Chitară: "treble",
+  "Chitară electrică": "treble",
+  "Chitară clasică": "treble",
+  "Chitară bas": "bass",
+  "Voce (cor)": "treble",
 }
 
 export function clefForInstrument(instrument: string): Clef {
@@ -47,6 +52,10 @@ export function clefsForInstrument(instrument: string): Clef[] {
 /** Abrevieri pentru numele lungi, ca eticheta să nu intre peste portativ */
 const INSTRUMENT_ABBREVIATIONS: Record<string, string> = {
   "Pian electric": "Pian el.",
+  "Chitară electrică": "Chit. el.",
+  "Chitară clasică": "Chit. cl.",
+  "Chitară bas": "Chit. bas",
+  "Voce (cor)": "Voce",
 }
 
 /** Numele scurt afișat ca etichetă în stânga portativului */

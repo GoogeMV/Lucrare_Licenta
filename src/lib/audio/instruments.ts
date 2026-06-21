@@ -29,6 +29,10 @@ const SAMPLE_SETS: Record<string, Record<string, string>> = {
   tuba: { F1: "F1.mp3", "A#1": "As1.mp3", F2: "F2.mp3", "A#2": "As2.mp3", D3: "D3.mp3" },
   piano: { C2: "C2.mp3", C3: "C3.mp3", G3: "G3.mp3", A3: "A3.mp3", C4: "C4.mp3", E4: "E4.mp3", G4: "G4.mp3", C5: "C5.mp3", G5: "G5.mp3", C6: "C6.mp3" },
   organ: { A1: "A1.mp3", C2: "C2.mp3", A2: "A2.mp3", C3: "C3.mp3", A3: "A3.mp3", C4: "C4.mp3", A4: "A4.mp3", C5: "C5.mp3", C6: "C6.mp3" },
+  "guitar-acoustic": { A2: "A2.mp3", C3: "C3.mp3", E3: "E3.mp3", G3: "G3.mp3", C4: "C4.mp3", E4: "E4.mp3", G4: "G4.mp3", C5: "C5.mp3" },
+  "guitar-electric": { A2: "A2.mp3", C3: "C3.mp3", "F#3": "Fs3.mp3", A3: "A3.mp3", C4: "C4.mp3", "F#4": "Fs4.mp3", A4: "A4.mp3", C5: "C5.mp3" },
+  "guitar-nylon": { A2: "A2.mp3", "C#3": "Cs3.mp3", E3: "E3.mp3", A3: "A3.mp3", "C#4": "Cs4.mp3", E4: "E4.mp3", A4: "A4.mp3" },
+  "bass-electric": { E1: "E1.mp3", G1: "G1.mp3", "A#1": "As1.mp3", "C#2": "Cs2.mp3", E2: "E2.mp3", G2: "G2.mp3", "A#2": "As2.mp3", E3: "E3.mp3", G3: "G3.mp3" },
 }
 
 /**
@@ -52,6 +56,12 @@ const INSTRUMENT_SAMPLE_FAMILY: Record<string, string> = {
   Pian: "piano",
   "Pian electric": "piano",
   Orgă: "organ",
+  Chitară: "guitar-acoustic",
+  "Chitară electrică": "guitar-electric",
+  "Chitară clasică": "guitar-nylon",
+  "Chitară bas": "bass-electric",
+  // corul nu are eșantioane pe CDN — îl redăm sintetic („aaa", vezi createChoirSynth)
+  "Voce (cor)": "choir",
 }
 
 /** Interfața comună folosită de player (Sampler și PolySynth o au amândouă) */
@@ -63,11 +73,24 @@ export interface InstrumentSound {
     /** Volumul atacului (0–1) — folosit pentru nuanțe (p/f); implicit maxim */
     velocity?: number,
   ): unknown
+  /** Atac fără release automat — sursa rămâne urmărită, deci `releaseAll`/
+   *  `triggerRelease` o pot tăia ulterior (folosit de audiție) */
+  triggerAttack(notes: string | string[], time?: number, velocity?: number): unknown
+  triggerRelease(notes: string | string[], time?: number): unknown
   releaseAll(): unknown
+  /** Distruge instrumentul — taie TOT sunetul (inclusiv notele deja programate);
+   *  `releaseAll` nu ajunge, fiindcă Tone golește lista de surse la programare */
+  dispose(): unknown
 }
 
-// cache per familie (Vioară + Violă împart aceleași eșantioane de vioară)
-const soundCache = new Map<string, Promise<InstrumentSound>>()
+// sampler PARTAJAT per familie (gata încărcat, refolosit) — pentru audiție, care
+// trebuie să pornească INSTANT (un sampler nou per notă ar fi async și s-ar anula
+// reciproc la navigare rapidă → tăcere)
+const sharedSoundCache = new Map<string, Promise<InstrumentSound>>()
+// cache de BUFFERE decodate per familie — încărcate o singură dată de pe CDN și
+// reutilizate de toate instrumentele de unică folosință (redare + audiție);
+// astfel, după prima încărcare, construirea unui instrument nou e instantanee
+const bufferCache = new Map<string, Promise<Record<string, AudioBuffer>>>()
 
 function createFallbackSynth(): InstrumentSound {
   const synth = new Tone.PolySynth(Tone.Synth).toDestination()
@@ -75,40 +98,141 @@ function createFallbackSynth(): InstrumentSound {
   return synth
 }
 
-function loadSampler(family: string): Promise<InstrumentSound> {
+/**
+ * Cor sintetic (timbru vocal „aaa") — biblioteca de eșantioane nu are voci, deci
+ * îl construim din sinteză, ca „Voice Aahs" din MuseScore: o undă sawtooth
+ * (bogată în armonice, ca vocea umană) înmuiată cu un filtru lowpass, vibrato
+ * ușor (senzație de cântăreț) și o urmă de reverb (ansamblu/sală). Cântă
+ * înălțimea fiecărei note — versurile rămân doar text, nu sunt rostite.
+ */
+function createChoirSynth(): InstrumentSound {
+  const synth = new Tone.PolySynth(Tone.Synth)
+  synth.set({
+    oscillator: { type: "sawtooth" },
+    envelope: { attack: 0.35, decay: 0.2, sustain: 0.85, release: 0.6 },
+  })
+  const filter = new Tone.Filter({ type: "lowpass", frequency: 1900, Q: 0.4 })
+  const vibrato = new Tone.Vibrato({ frequency: 5, depth: 0.06 })
+  const reverb = new Tone.Reverb({ decay: 2.2, wet: 0.25 })
+  synth.chain(filter, vibrato, reverb, Tone.getDestination())
+  synth.volume.value = -9
+  return synth
+}
+
+/**
+ * Încarcă (o singură dată, apoi din cache) bufferele decodate ale unei familii.
+ * Le păstrăm ca `AudioBuffer` brute, ca să putem construi oricâte instrumente
+ * noi din ele fără a reîncărca de pe CDN — disposal-ul unui Sampler distruge
+ * doar învelișurile `ToneAudioBuffer`, nu bufferele brute din acest cache.
+ */
+function loadBuffers(family: string): Promise<Record<string, AudioBuffer>> {
+  let cached = bufferCache.get(family)
+  if (!cached) {
+    const urls = SAMPLE_SETS[family]
+    cached = new Promise<Record<string, AudioBuffer>>((resolve, reject) => {
+      const out: Record<string, AudioBuffer> = {}
+      const entries = Object.entries(urls)
+      let remaining = entries.length
+      const timer = window.setTimeout(
+        () => reject(new Error(`timeout la încărcarea eșantioanelor "${family}"`)),
+        LOAD_TIMEOUT_MS,
+      )
+      entries.forEach(([note, file]) => {
+        new Tone.ToneAudioBuffer(
+          `${SAMPLE_BASE_URL}/${family}/${file}`,
+          (buf) => {
+            out[note] = buf.get() as AudioBuffer
+            remaining -= 1
+            if (remaining === 0) {
+              window.clearTimeout(timer)
+              resolve(out)
+            }
+          },
+          (error) => {
+            window.clearTimeout(timer)
+            reject(error)
+          },
+        )
+      })
+    })
+    bufferCache.set(family, cached)
+  }
+  return cached
+}
+
+/** Construiește un Sampler NOU din bufferele din cache (sau un sintetizator). */
+function makeSampler(family: string): Promise<InstrumentSound> {
+  if (family === "choir") return Promise.resolve(createChoirSynth())
+  if (!SAMPLE_SETS[family]) return Promise.resolve(createFallbackSynth())
+  return loadBuffers(family).then((buffers) => {
+    const sampler = new Tone.Sampler({ urls: buffers, release: 0.3 }).toDestination()
+    sampler.volume.value = -4
+    return sampler
+  })
+}
+
+/**
+ * Construiește un sunet NOU pentru un instrument, în contextul audio curent și
+ * FĂRĂ cache — necesar la randarea WAV offline (`Tone.Offline` rulează într-un
+ * context separat, deci nu putem refolosi bufferele din cache-ul live).
+ */
+export function createInstrument(instrument: string): Promise<InstrumentSound> {
+  const family = INSTRUMENT_SAMPLE_FAMILY[instrument] ?? "piano"
+  if (family === "choir") return Promise.resolve(createChoirSynth())
   const urls = SAMPLE_SETS[family]
   if (!urls) return Promise.resolve(createFallbackSynth())
-
-  const load = new Promise<InstrumentSound>((resolve, reject) => {
+  return new Promise<InstrumentSound>((resolve, reject) => {
+    const timer = window.setTimeout(
+      () => reject(new Error(`timeout la încărcarea eșantioanelor "${family}"`)),
+      LOAD_TIMEOUT_MS,
+    )
     const sampler = new Tone.Sampler({
       urls,
       baseUrl: `${SAMPLE_BASE_URL}/${family}/`,
       release: 0.3,
-      onload: () => resolve(sampler),
-      onerror: (error) => reject(error),
+      onload: () => {
+        window.clearTimeout(timer)
+        resolve(sampler)
+      },
+      onerror: (error) => {
+        window.clearTimeout(timer)
+        reject(error)
+      },
     }).toDestination()
     sampler.volume.value = -4
   })
-  const timeout = new Promise<never>((_, reject) => {
-    window.setTimeout(() => reject(new Error(`timeout la încărcarea eșantioanelor "${family}"`)), LOAD_TIMEOUT_MS)
-  })
-
-  return Promise.race([load, timeout])
 }
 
 /**
- * Sunetul pentru un instrument din paletă — eșantioane reale, cu cache pe
- * sesiune; la eșec (offline/CDN căzut) întoarce sintetizatorul generic.
+ * Sunet de UNICĂ FOLOSINȚĂ pentru redare ȘI audiție — construit din bufferele din cache
+ * (instant după prima încărcare). Spre deosebire de cel partajat, player-ul îl
+ * DISTRUGE la Stop/Pauză: doar `dispose()` taie notele deja programate pe ceasul
+ * audio (Tone golește lista de surse active la programare, deci `releaseAll` nu
+ * le mai prinde).
+ */
+export function createPlaybackSound(instrument: string): Promise<InstrumentSound> {
+  const family = INSTRUMENT_SAMPLE_FAMILY[instrument] ?? "piano"
+  return makeSampler(family).catch((error) => {
+    console.warn(`Eșantioanele pentru "${family}" nu s-au încărcat — folosim sintetizatorul generic.`, error)
+    return createFallbackSynth()
+  })
+}
+
+/**
+ * Sunet PARTAJAT (cache pe sesiune) pentru AUDIȚIE — gata încărcat și refolosit,
+ * ca trigger-ul să fie instant la navigare rapidă. Audiția îl taie cu `releaseAll`
+ * între note (folosind `triggerAttack`, nu `triggerAttackRelease`, ca sursa să
+ * rămână urmăribilă); nu se distruge.
  */
 export function getInstrumentSound(instrument: string): Promise<InstrumentSound> {
   const family = INSTRUMENT_SAMPLE_FAMILY[instrument] ?? "piano"
-  let cached = soundCache.get(family)
+  let cached = sharedSoundCache.get(family)
   if (!cached) {
-    cached = loadSampler(family).catch((error) => {
+    cached = makeSampler(family).catch((error) => {
       console.warn(`Eșantioanele pentru "${family}" nu s-au încărcat — folosim sintetizatorul generic.`, error)
       return createFallbackSynth()
     })
-    soundCache.set(family, cached)
+    sharedSoundCache.set(family, cached)
   }
   return cached
 }

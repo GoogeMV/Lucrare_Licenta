@@ -36,6 +36,33 @@ export const DURATION_SYMBOLS: Record<Duration, string> = {
 
 export const DURATIONS: Duration[] = ["whole", "half", "quarter", "eighth", "sixteenth"]
 
+/** Valorile de notă oferite ca unitate de bătaie pentru indicația de tempo
+ *  (inclusiv variantele cu punct, ex. ♩. = 90 în 6/8) */
+export const TEMPO_BEAT_CHOICES: { duration: Duration; dotted: boolean }[] = [
+  { duration: "whole", dotted: false },
+  { duration: "half", dotted: false },
+  { duration: "half", dotted: true },
+  { duration: "quarter", dotted: false },
+  { duration: "quarter", dotted: true },
+  { duration: "eighth", dotted: false },
+  { duration: "eighth", dotted: true },
+  { duration: "sixteenth", dotted: false },
+]
+
+/**
+ * BPM efectiv în pătrimi pentru redare/metronom, separat de indicația notată:
+ * numărul notat × valoarea unității de bătaie (în pătrimi, +50% dacă e cu punct)
+ * × procentul de viteză de redare / 100. Ex. „♪ = 120" la 100% = 60 pătrimi/min.
+ */
+export function playbackQuarterBpm(
+  notatedTempo: number,
+  beat: Duration,
+  beatDotted: boolean,
+  ratePercent: number,
+): number {
+  return notatedTempo * DURATION_BEATS[beat] * (beatDotted ? 1.5 : 1) * (ratePercent / 100)
+}
+
 /**
  * Taste rapide pentru durate (ca în MuseScore — Q/W/E/R/T pe rândul de sus
  * al tastaturii): apăsarea uneia setează durata curentă de input și, dacă
@@ -85,7 +112,25 @@ export function vexflowDurationCode(duration: Duration, isRest: boolean): string
   return isRest ? `${base}r` : base
 }
 
-/** Durata efectivă a unei intrări, în pătrimi — punctul de prelungire adaugă 50% */
-export function entryBeats(entry: { duration: Duration; dotted?: boolean }): number {
-  return DURATION_BEATS[entry.duration] * (entry.dotted ? 1.5 : 1)
+/**
+ * Numărul „normal" al unui tuplet (în câte valori obișnuite intră): cel mai mare
+ * power of 2 ≤ numărul de note. Triolet 3→2, cvintolet 5→4, sextolet 6→4.
+ */
+export function tupletNormal(count: number): number {
+  let n = 1
+  while (n * 2 <= count) n *= 2
+  return n
+}
+
+/** Durata imediat mai mică (whole→half→…→sixteenth), sau `null` pentru șaisprezecime */
+export function smallerDuration(duration: Duration): Duration | null {
+  const i = DURATIONS.indexOf(duration)
+  return i >= 0 && i < DURATIONS.length - 1 ? DURATIONS[i + 1] : null
+}
+
+/** Durata efectivă a unei intrări, în pătrimi — punctul adaugă 50%, iar un
+ *  tuplet o scalează cu normal/count (ex. optime de triolet = 0.5 × 2/3) */
+export function entryBeats(entry: { duration: Duration; dotted?: boolean; tuplet?: number }): number {
+  const base = DURATION_BEATS[entry.duration] * (entry.dotted ? 1.5 : 1)
+  return entry.tuplet ? (base * tupletNormal(entry.tuplet)) / entry.tuplet : base
 }

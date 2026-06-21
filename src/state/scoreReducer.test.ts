@@ -1,0 +1,89 @@
+import { describe, it, expect } from "vitest"
+import { scoreReducer, initialScoreState, historyReducer, initialHistoryState } from "@/state/scoreReducer"
+
+const firstId = initialScoreState.staves[0].notes[0].id // prima notă = Mi4
+
+describe("transposeSelected", () => {
+  it("urcă înălțimea notei selectate cu o treaptă (Mi4 → Fa4)", () => {
+    let s = scoreReducer(initialScoreState, { type: "selectNote", id: firstId })
+    s = scoreReducer(s, { type: "transposeSelected", direction: "up" })
+    expect(s.staves[0].notes[0].pitches[0]).toEqual({ step: "F", octave: 4 })
+  })
+})
+
+describe("makeTriplet", () => {
+  it("înlocuiește nota cu 3 intrări egale de triolet", () => {
+    const before = initialScoreState.staves[0].notes.length
+    let s = scoreReducer(initialScoreState, { type: "selectNote", id: firstId })
+    s = scoreReducer(s, { type: "makeTriplet" })
+    expect(s.staves[0].notes.length).toBe(before + 2)
+    const trio = s.staves[0].notes.slice(0, 3)
+    expect(trio.every((n) => n.tuplet === 3)).toBe(true)
+    expect(new Set(trio.map((n) => n.tupletId)).size).toBe(1) // același grup
+    expect(trio.every((n) => n.duration === "eighth")).toBe(true) // pătrime → optimi
+  })
+})
+
+describe("intrare MIDI (insertNoteWithPitch + addPitchToSelectedNote)", () => {
+  it("inserează o notă nouă la înălțimea exactă, după nota selectată", () => {
+    const before = initialScoreState.staves[0].notes.length
+    let s = scoreReducer(initialScoreState, { type: "selectNote", id: firstId })
+    s = scoreReducer(s, { type: "insertNoteWithPitch", pitch: { step: "C", octave: 4 } })
+    expect(s.staves[0].notes.length).toBe(before + 1)
+    // s-a inserat după prima notă (index 1) și a devenit selecția curentă
+    expect(s.staves[0].notes[1].pitches[0]).toEqual({ step: "C", octave: 4 })
+    expect(s.selectedId).toBe(s.staves[0].notes[1].id)
+  })
+
+  it("adaugă a doua înălțime la nota selectată → acord (sortat ascendent)", () => {
+    let s = scoreReducer(initialScoreState, { type: "selectNote", id: firstId })
+    s = scoreReducer(s, { type: "insertNoteWithPitch", pitch: { step: "C", octave: 4 } })
+    s = scoreReducer(s, { type: "addPitchToSelectedNote", pitch: { step: "E", octave: 4 } })
+    const chord = s.staves[0].notes[1]
+    expect(chord.pitches).toHaveLength(2)
+    expect(chord.pitches.map((p) => p.step)).toEqual(["C", "E"])
+  })
+})
+
+describe("setBarline", () => {
+  it("atașează bara măsurii notei selectate și o scoate la re-aplicare", () => {
+    let s = scoreReducer(initialScoreState, { type: "selectNote", id: firstId })
+    s = scoreReducer(s, { type: "setBarline", barType: "repeat-end" })
+    // prima notă e în măsura 0
+    expect(s.barlines[0]).toBe("repeat-end")
+    // re-aplicarea aceluiași tip o elimină (toggle)
+    s = scoreReducer(s, { type: "setBarline", barType: "repeat-end" })
+    expect(s.barlines[0]).toBeUndefined()
+  })
+})
+
+describe("toggleRest", () => {
+  it("comută nota în pauză și înapoi", () => {
+    let s = scoreReducer(initialScoreState, { type: "selectNote", id: firstId })
+    s = scoreReducer(s, { type: "toggleRest" })
+    expect(s.staves[0].notes[0].type).toBe("rest")
+    s = scoreReducer(s, { type: "toggleRest" })
+    expect(s.staves[0].notes[0].type).toBe("note")
+  })
+})
+
+describe("historyReducer (undo/redo)", () => {
+  it("face snapshot doar la schimbări de conținut și revine la undo", () => {
+    // selecția nu schimbă conținutul → fără snapshot
+    const h1 = historyReducer(initialHistoryState, { type: "selectNote", id: firstId })
+    expect(h1.past).toHaveLength(0)
+
+    // transpunerea schimbă conținutul → snapshot
+    const h2 = historyReducer(h1, { type: "transposeSelected", direction: "up" })
+    expect(h2.past).toHaveLength(1)
+    expect(h2.present.staves[0].notes[0].pitches[0]).toEqual({ step: "F", octave: 4 })
+
+    // undo readuce Mi4
+    const h3 = historyReducer(h2, { type: "undo" })
+    expect(h3.present.staves[0].notes[0].pitches[0]).toEqual({ step: "E", octave: 4 })
+
+    // redo reaplică
+    const h4 = historyReducer(h3, { type: "redo" })
+    expect(h4.present.staves[0].notes[0].pitches[0]).toEqual({ step: "F", octave: 4 })
+  })
+})

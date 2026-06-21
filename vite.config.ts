@@ -11,4 +11,10 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    // în dev, cererile /api sunt redirecționate către backend-ul Node (server/)
+    proxy: {
+      "/api": "http://localhost:4000",
+    },
+  },
 })

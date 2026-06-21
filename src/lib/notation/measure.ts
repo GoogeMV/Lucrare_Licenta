@@ -1,39 +1,181 @@
-import type { Duration } from "@/types/score"
+import type { BarType, Duration, EntryType, NoteEntry } from "@/types/score"
 import { entryBeats } from "@/lib/notation/duration"
 
 /**
- * Împarte o listă de note în măsuri (liste de indici în lista de note), pe
- * baza duratelor și a lungimii măsurii (`beatsPerMeasure`, în pătrimi).
- * Folosită atât la randare (InteractiveStave) cât și la export (MusicXML),
- * ca ambele să vadă exact aceeași împărțire pe măsuri.
- *
- * O notă mai lungă decât spațiul rămas trece în măsura următoare (măsurile
- * pot rămâne incomplete; nu facem încă legare cu "tie" peste bara de măsură).
+ * Un fragment de notă într-o măsură: o porțiune dintr-o intrare (`noteIndex` =
+ * indicele în lista originală de note), cu propria valoare de durată. O notă
+ * care depășește bara de măsură e spartă în mai multe fragmente legate cu
+ * ligatură (`tieStart`/`tieStop`), ca fiecare măsură să aibă exact câți timpi
+ * trebuie. O notă care încape întreagă rămâne un singur fragment, cu durata ei.
+ */
+export interface MeasureFragment {
+  /** Indicele intrării originale în `notes` */
+  noteIndex: number
+  duration: Duration
+  dotted?: boolean
+  /** Legată (tie) de fragmentul următor al ACELEIAȘI note */
+  tieStart?: boolean
+  /** Legată (tie) de fragmentul anterior al aceleiași note */
+  tieStop?: boolean
+  /** Numărul de note al tuplet-ului (3 = triolet), propagat din intrare */
+  tuplet?: number
+  /** Id-ul grupului de tuplet, propagat din intrare (pentru bracket + „3") */
+  tupletId?: string
+}
+
+/**
+ * Paleta de valori de notă (în pătrimi), descrescător — folosită pentru a
+ * descompune o durată oarecare (multiplu de 0.25) în valori notabile.
+ */
+const NOTE_VALUE_PALETTE: { beats: number; duration: Duration; dotted?: boolean }[] = [
+  { beats: 4, duration: "whole" },
+  { beats: 3, duration: "half", dotted: true },
+  { beats: 2, duration: "half" },
+  { beats: 1.5, duration: "quarter", dotted: true },
+  { beats: 1, duration: "quarter" },
+  { beats: 0.75, duration: "eighth", dotted: true },
+  { beats: 0.5, duration: "eighth" },
+  { beats: 0.25, duration: "sixteenth" },
+]
+
+const EPS = 1e-6
+
+/** Descompune un număr de pătrimi în valori de notă notabile (greedy, cea mai
+ *  mare valoare ≤ rest). Toate duratele/punctele noastre sunt multipli de 0.25,
+ *  deci se termină mereu. Folosit și pentru a umple cu pauze golul dintre
+ *  conținutul unui portativ și o măsură în care se dă click mai departe. */
+export function decompose(beats: number): { duration: Duration; dotted?: boolean }[] {
+  const out: { duration: Duration; dotted?: boolean }[] = []
+  let remaining = beats
+  while (remaining > EPS) {
+    const piece = NOTE_VALUE_PALETTE.find((v) => v.beats <= remaining + EPS)
+    if (!piece) break
+    out.push({ duration: piece.duration, dotted: piece.dotted })
+    remaining -= piece.beats
+  }
+  return out
+}
+
+/**
+ * Împarte o listă de note în măsuri de fragmente. O notă care depășește spațiul
+ * rămas e spartă: porțiunea care încape umple măsura curentă, restul continuă
+ * în următoarea (legate cu ligatură). Folosită identic la randare
+ * (InteractiveStave) și la export (MusicXML), ca ambele să vadă aceeași
+ * împărțire. Pauzele se sparg la fel, dar fără ligatură.
  */
 export function splitIntoMeasures(
-  notes: { duration: Duration; dotted?: boolean }[],
+  notes: { type?: EntryType; duration: Duration; dotted?: boolean; tuplet?: number; tupletId?: string }[],
   beatsPerMeasure: number,
-): number[][] {
-  const measures: number[][] = []
-  let current: number[] = []
-  let beats = 0
+): MeasureFragment[][] {
+  const measures: MeasureFragment[][] = []
+  let current: MeasureFragment[] = []
+  let beatsInMeasure = 0
+
+  const flush = () => {
+    measures.push(current)
+    current = []
+    beatsInMeasure = 0
+  }
 
   notes.forEach((entry, i) => {
-    const noteBeats = entryBeats(entry)
-    if (current.length > 0 && beats + noteBeats > beatsPerMeasure + 1e-9) {
-      measures.push(current)
-      current = []
-      beats = 0
+    // trioletele (durate ne-diadice, ex. 1/3 de timp) NU se descompun și nu se
+    // sparg peste bară — rămân un singur fragment, cu durata lor notată. Dacă nu
+    // mai încap în măsură, închidem măsura curentă și le punem întregi în următoarea.
+    if (entry.tuplet) {
+      if (beatsPerMeasure - beatsInMeasure <= EPS) flush()
+      current.push({
+        noteIndex: i,
+        duration: entry.duration,
+        dotted: entry.dotted,
+        tuplet: entry.tuplet,
+        tupletId: entry.tupletId,
+      })
+      beatsInMeasure += entryBeats(entry)
+      if (beatsInMeasure >= beatsPerMeasure - EPS) flush()
+      return
     }
-    current.push(i)
-    beats += noteBeats
-    if (beats >= beatsPerMeasure - 1e-9) {
-      measures.push(current)
-      current = []
-      beats = 0
+
+    let remaining = entryBeats(entry)
+    // fragmentele acestei note (ca să marcăm ligaturile între ele la final)
+    const entryFrags: MeasureFragment[] = []
+
+    while (remaining > EPS) {
+      const space = beatsPerMeasure - beatsInMeasure
+      if (space <= EPS) {
+        flush()
+        continue
+      }
+      const take = Math.min(space, remaining)
+      for (const piece of decompose(take)) {
+        const frag: MeasureFragment = { noteIndex: i, duration: piece.duration, dotted: piece.dotted }
+        current.push(frag)
+        entryFrags.push(frag)
+      }
+      beatsInMeasure += take
+      remaining -= take
+      if (beatsInMeasure >= beatsPerMeasure - EPS) flush()
+    }
+
+    // ligaturile leagă fragmentele consecutive ale aceleiași NOTE (nu pauze)
+    if (entry.type !== "rest") {
+      for (let k = 0; k < entryFrags.length; k++) {
+        if (k > 0) entryFrags[k].tieStop = true
+        if (k < entryFrags.length - 1) entryFrags[k].tieStart = true
+      }
     }
   })
-  if (current.length > 0) measures.push(current)
+
+  if (current.length > 0) flush()
   if (measures.length === 0) measures.push([])
   return measures
+}
+
+/**
+ * Pentru REDARE: extinde repetițiile dintr-o listă de note, dublând secțiunile
+ * dintre `repeat-begin` și `repeat-end` (un nivel, fără volte/nested). Fără
+ * repetiții, întoarce lista NESCHIMBATĂ (aceeași referință). Intrările sunt
+ * grupate pe măsura în care ÎNCEP; o repetiție readuce pointer-ul la ultima
+ * `repeat-begin` (sau la început), o singură dată per `repeat-end`.
+ */
+export function expandRepeats(
+  entries: NoteEntry[],
+  barlines: Record<number, BarType> | undefined,
+  beatsPerMeasure: number,
+  repeatCounts?: Record<number, number>,
+): NoteEntry[] {
+  if (!barlines) return entries
+  const hasRepeat = Object.values(barlines).some((b) => b === "repeat-begin" || b === "repeat-end")
+  if (!hasRepeat || entries.length === 0) return entries
+
+  // grupăm intrările pe măsura de început
+  const byMeasure: NoteEntry[][] = []
+  let beat = 0
+  for (const e of entries) {
+    const m = Math.floor(beat / beatsPerMeasure + 1e-9)
+    ;(byMeasure[m] ??= []).push(e)
+    beat += entryBeats(e)
+  }
+  const total = byMeasure.length
+
+  const out: NoteEntry[] = []
+  // câte salturi înapoi am făcut deja pentru fiecare repeat-end (un repeat-end care
+  // se cântă de N ori sare înapoi de N−1 ori)
+  const jumps = new Map<number, number>()
+  let repeatStart = 0
+  let i = 0
+  while (i < total) {
+    if (barlines[i] === "repeat-begin") repeatStart = i
+    for (const e of byMeasure[i] ?? []) out.push(e)
+    if (barlines[i] === "repeat-end") {
+      const times = Math.max(2, repeatCounts?.[i] ?? 2)
+      const done = jumps.get(i) ?? 0
+      if (done < times - 1) {
+        jumps.set(i, done + 1)
+        i = repeatStart
+        continue
+      }
+    }
+    i++
+  }
+  return out
 }

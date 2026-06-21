@@ -1,9 +1,9 @@
 import type { Accidental, Articulation, Clef, Duration, Staff, TimeSignature } from "@/types/score"
-import { entryBeats } from "@/lib/notation/duration"
+import { DURATION_BEATS, entryBeats, tupletNormal } from "@/lib/notation/duration"
 import { DYNAMIC_MUSICXML_TAGS } from "@/lib/notation/dynamics"
 import { keyAccidentalMap, keyFifths } from "@/lib/notation/keySignature"
 import { measureQuarters } from "@/lib/notation/timeSignature"
-import { splitIntoMeasures } from "@/lib/notation/measure"
+import { splitIntoMeasures, type MeasureFragment } from "@/lib/notation/measure"
 
 /**
  * Export MusicXML (score-partwise 3.1) — formatul standard de schimb pentru
@@ -18,8 +18,9 @@ import { splitIntoMeasures } from "@/lib/notation/measure"
  *  - măsurile sunt împărțite identic cu randarea (lib/notation/measure).
  */
 
-// unități de durată per pătrime: 4 => șaisprezecimea = 1 (cea mai mică durată a noastră)
-const DIVISIONS = 4
+// unități de durată per pătrime: 12 => divizibil cu 4 (șaisprezecime = 3) ȘI cu 3
+// (optime de triolet = 4), deci toate duratele noastre, inclusiv trioletele, ies întregi
+const DIVISIONS = 12
 
 const TYPE_NAMES: Record<Duration, string> = {
   whole: "whole",
@@ -50,6 +51,39 @@ const ARTICULATION_TAGS: Record<Articulation, string> = {
   marcato: "strong-accent",
 }
 
+/**
+ * Programul General MIDI (1–128) al fiecărui instrument — fără el, MuseScore
+ * tratează toate părțile ca pian. Cele nemapate cad pe pian (1).
+ */
+const MIDI_PROGRAM: Record<string, number> = {
+  Vioară: 41,
+  Violă: 42,
+  Violoncel: 43,
+  Contrabas: 44,
+  Flaut: 74,
+  Oboi: 69,
+  Clarinet: 72,
+  Fagot: 71,
+  Trompetă: 57,
+  Corn: 61,
+  Trombon: 58,
+  Tubă: 59,
+  Pian: 1,
+  "Pian electric": 5,
+  Orgă: 20,
+  Chitară: 26,
+  "Chitară electrică": 28,
+  "Chitară clasică": 25,
+  "Chitară bas": 34,
+  "Voce (cor)": 53,
+}
+
+/** Canalul MIDI al unei părți (1–16), sărind canalul 10 (rezervat percuției) */
+function midiChannel(partIndex: number): number {
+  const c = (partIndex % 15) + 1
+  return c >= 10 ? c + 1 : c
+}
+
 function escapeXml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
@@ -57,13 +91,15 @@ function escapeXml(text: string): string {
 export function scoreToMusicXML(
   staves: Staff[],
   timeSignature: TimeSignature,
-  meta?: { title?: string; composer?: string; tempo?: number },
+  meta?: { title?: string; composer?: string; tempo?: number; tempoBeat?: Duration; tempoBeatDotted?: boolean },
 ): string {
   const beatsPerMeasure = measureQuarters(timeSignature)
   const measureDivisions = Math.round(beatsPerMeasure * DIVISIONS)
   const title = meta?.title?.trim() || "Partitură fără titlu"
   const composer = meta?.composer?.trim()
   const tempo = meta?.tempo ?? 120
+  const tempoBeat: Duration = meta?.tempoBeat ?? "quarter"
+  const tempoBeatDotted = meta?.tempoBeatDotted ?? false
 
   // toate părțile trebuie să aibă același număr de măsuri (cele scurte se
   // completează cu pauze de măsură întreagă), altfel partitura se dezaliniază
@@ -73,14 +109,25 @@ export function scoreToMusicXML(
   )
 
   const partList = staves
-    .map(
-      (staff, i) =>
-        `    <score-part id="P${i + 1}"><part-name>${escapeXml(staff.instrument)}</part-name></score-part>`,
-    )
+    .map((staff, i) => {
+      const name = escapeXml(staff.instrument)
+      const program = MIDI_PROGRAM[staff.instrument] ?? 1
+      // score-instrument + midi-instrument: așa MuseScore alege timbrul corect
+      // (altfel toate părțile sunt redate ca pian)
+      return [
+        `    <score-part id="P${i + 1}">`,
+        `      <part-name>${name}</part-name>`,
+        `      <score-instrument id="P${i + 1}-I1"><instrument-name>${name}</instrument-name></score-instrument>`,
+        `      <midi-instrument id="P${i + 1}-I1"><midi-channel>${midiChannel(i)}</midi-channel><midi-program>${program}</midi-program></midi-instrument>`,
+        `    </score-part>`,
+      ].join("\n")
+    })
     .join("\n")
 
   const parts = staves
-    .map((staff, i) => partToXml(staff, i + 1, timeSignature, measureDivisions, totalMeasures, tempo))
+    .map((staff, i) =>
+      partToXml(staff, i + 1, timeSignature, measureDivisions, totalMeasures, tempo, tempoBeat, tempoBeatDotted),
+    )
     .join("\n")
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -105,6 +152,8 @@ function partToXml(
   measureDivisions: number,
   totalMeasures: number,
   tempo: number,
+  tempoBeat: Duration,
+  tempoBeatDotted: boolean,
 ): string {
   const beatsPerMeasure = measureQuarters(timeSignature)
   const measures = splitIntoMeasures(staff.notes, beatsPerMeasure)
@@ -123,7 +172,7 @@ function partToXml(
   })
 
   const measuresXml = measures
-    .map((noteIndices, measureIndex) => {
+    .map((fragments, measureIndex) => {
       const lines: string[] = [`    <measure number="${measureIndex + 1}">`]
 
       // atributele (diviziuni, armură, măsură, cheie) doar pe prima măsură
@@ -141,22 +190,24 @@ function partToXml(
           lines.push(
             '      <direction placement="above">',
             "        <direction-type>",
-            `          <metronome><beat-unit>quarter</beat-unit><per-minute>${tempo}</per-minute></metronome>`,
+            `          <metronome><beat-unit>${TYPE_NAMES[tempoBeat]}</beat-unit>${tempoBeatDotted ? "<beat-unit-dot/>" : ""}<per-minute>${tempo}</per-minute></metronome>`,
             "        </direction-type>",
-            `        <sound tempo="${tempo}"/>`,
+            // sound@tempo e mereu în pătrimi/min (convenția MusicXML)
+            `        <sound tempo="${Math.round(tempo * DURATION_BEATS[tempoBeat] * (tempoBeatDotted ? 1.5 : 1))}"/>`,
             "      </direction>",
           )
         }
       }
 
-      if (noteIndices.length === 0) {
+      if (fragments.length === 0) {
         // măsură goală — pauză de măsură întreagă, ca partida să rămână validă
         lines.push(`      <note><rest measure="yes"/><duration>${measureDivisions}</duration></note>`)
       } else {
-        for (const noteIndex of noteIndices) {
-          const entry = staff.notes[noteIndex]
-          // nuanța se exportă ca <direction> înaintea notei pe care e plasată
-          if (entry.dynamic) {
+        fragments.forEach((frag, k) => {
+          const entry = staff.notes[frag.noteIndex]
+          // nuanța se exportă ca <direction> o singură dată, înaintea primului
+          // fragment al notei (nu pe continuările legate peste bară)
+          if (entry.dynamic && !frag.tieStop) {
             lines.push(
               '      <direction placement="below">',
               "        <direction-type>",
@@ -165,8 +216,12 @@ function partToXml(
               "      </direction>",
             )
           }
-          lines.push(noteToXml(entry, keyMap, slurStarts, slurStops))
-        }
+          // începutul/sfârșitul grupului de tuplet (trioletele nu trec peste bară,
+          // deci marginile se află comparând cu fragmentele vecine din măsură)
+          const tupletStart = !!frag.tupletId && fragments[k - 1]?.tupletId !== frag.tupletId
+          const tupletStop = !!frag.tupletId && fragments[k + 1]?.tupletId !== frag.tupletId
+          lines.push(noteToXml(entry, frag, keyMap, slurStarts, slurStops, tupletStart, tupletStop))
+        })
       }
 
       lines.push("    </measure>")
@@ -179,17 +234,43 @@ function partToXml(
 
 function noteToXml(
   entry: Staff["notes"][number],
+  frag: MeasureFragment,
   keyMap: ReturnType<typeof keyAccidentalMap>,
   slurStarts: Map<string, number>,
   slurStops: Map<string, number>,
+  tupletStart = false,
+  tupletStop = false,
 ): string {
-  const duration = Math.round(entryBeats(entry) * DIVISIONS)
-  const type = TYPE_NAMES[entry.duration]
+  // durata/valoarea vin din FRAGMENT (o notă spartă peste bară are fragmente cu
+  // valori diferite, legate prin tie); alterațiile/legato/articulațiile sunt
+  // proprietăți ale notei și apar doar pe primul fragment
+  const duration = Math.round(
+    entryBeats({ duration: frag.duration, dotted: frag.dotted, tuplet: frag.tuplet }) * DIVISIONS,
+  )
+  const type = TYPE_NAMES[frag.duration]
+  const isFirst = !frag.tieStop
+  // raportul de tuplet (3:2 pentru triolet) — folosit la <time-modification>
+  const timeMod = frag.tuplet
+    ? [
+        "        <time-modification>",
+        `          <actual-notes>${frag.tuplet}</actual-notes>`,
+        `          <normal-notes>${tupletNormal(frag.tuplet)}</normal-notes>`,
+        "        </time-modification>",
+      ]
+    : []
+  // notațiile de tuplet (bracket + „3") la marginile grupului
+  const tupletNotations: string[] = []
+  if (tupletStart) tupletNotations.push('          <tuplet type="start" bracket="yes" number="1"/>')
+  if (tupletStop) tupletNotations.push('          <tuplet type="stop" number="1"/>')
 
   if (entry.type === "rest") {
     const lines = ["      <note>", "        <rest/>"]
     lines.push(`        <duration>${duration}</duration>`, `        <type>${type}</type>`)
-    if (entry.dotted) lines.push("        <dot/>")
+    if (frag.dotted) lines.push("        <dot/>")
+    lines.push(...timeMod)
+    if (tupletNotations.length > 0) {
+      lines.push("        <notations>", ...tupletNotations, "        </notations>")
+    }
     lines.push("      </note>")
     return lines.join("\n")
   }
@@ -212,20 +293,38 @@ function noteToXml(
         "        </pitch>",
       )
 
-      lines.push(`        <duration>${duration}</duration>`, `        <type>${type}</type>`)
-      if (entry.dotted) lines.push("        <dot/>")
+      lines.push(`        <duration>${duration}</duration>`)
+      // ligatura care SUNĂ (tie) — pe fiecare notă a acordului
+      if (frag.tieStop) lines.push('        <tie type="stop"/>')
+      if (frag.tieStart) lines.push('        <tie type="start"/>')
+      lines.push(`        <type>${type}</type>`)
+      if (frag.dotted) lines.push("        <dot/>")
 
-      // alterația desenată explicit lângă notă (nu și cea implicită din armură)
-      if (pitch.accidental) {
+      // alterația desenată explicit (doar pe primul fragment; continuările legate
+      // nu repetă alterația)
+      if (isFirst && pitch.accidental) {
         lines.push(`        <accidental>${ACCIDENTAL_NAMES[pitch.accidental]}</accidental>`)
       }
 
+      // raportul de tuplet — pe fiecare notă (inclusiv membrii acordului)
+      lines.push(...timeMod)
+
       if (pitchIdx === 0) {
-        const articulations = entry.articulations ?? []
-        const slurStart = slurStarts.get(entry.id)
-        const slurStop = slurStops.get(entry.id)
-        if (articulations.length > 0 || slurStart !== undefined || slurStop !== undefined) {
+        const articulations = isFirst ? entry.articulations ?? [] : []
+        const slurStart = isFirst ? slurStarts.get(entry.id) : undefined
+        const slurStop = isFirst ? slurStops.get(entry.id) : undefined
+        const hasNotations =
+          articulations.length > 0 ||
+          slurStart !== undefined ||
+          slurStop !== undefined ||
+          frag.tieStart ||
+          frag.tieStop ||
+          tupletNotations.length > 0
+        if (hasNotations) {
           lines.push("        <notations>")
+          // ligatura VIZUALĂ (tied) — perechea grafică a <tie>
+          if (frag.tieStop) lines.push('          <tied type="stop"/>')
+          if (frag.tieStart) lines.push('          <tied type="start"/>')
           // o notă poate fi simultan finalul unei legături și începutul alteia
           if (slurStop !== undefined) lines.push(`          <slur type="stop" number="${slurStop}"/>`)
           if (slurStart !== undefined) lines.push(`          <slur type="start" number="${slurStart}"/>`)
@@ -236,7 +335,19 @@ function noteToXml(
               "          </articulations>",
             )
           }
+          lines.push(...tupletNotations)
           lines.push("        </notations>")
+        }
+
+        // versuri (o singură strofă): silaba se atașează notei (prima a acordului),
+        // doar pe primul fragment. Păstrăm silabele independente (syllabic=single).
+        if (isFirst && entry.lyric) {
+          lines.push(
+            '        <lyric number="1">',
+            "          <syllabic>single</syllabic>",
+            `          <text>${escapeXml(entry.lyric)}</text>`,
+            "        </lyric>",
+          )
         }
       }
 

@@ -1,4 +1,4 @@
-import type { Staff, TimeSignature } from "@/types/score"
+import type { BarType, Duration, Staff, TimeSignature } from "@/types/score"
 
 /**
  * Persistența partiturii în `localStorage` (un singur slot, versionat).
@@ -13,26 +13,50 @@ export interface SavedScore {
   savedAt: string
   staves: Staff[]
   timeSignature: TimeSignature
+  /** Bare speciale per index de măsură (repetiții etc.) — pot lipsi din salvări vechi */
+  barlines?: Record<number, BarType>
+  /** De câte ori se repetă secțiunea, per măsură cu repeat-end (implicit 2) */
+  repeatCounts?: Record<number, number>
   /** Metadate opționale (adăugate ulterior — pot lipsi din salvările vechi) */
   title?: string
   composer?: string
   tempo?: number
+  /** Unitatea de bătaie a indicației de tempo (♩, ♪…) */
+  tempoBeat?: Duration
+  /** Dacă unitatea de bătaie are punct de prelungire (ex. ♩.) */
+  tempoBeatDotted?: boolean
+  /** Indicație liberă de tempo/expresie (ex. „Adagietto") */
+  tempoText?: string
 }
 
 /** Salvează partitura; întoarce `false` dacă scrierea eșuează (ex. cotă plină) */
 export function saveScore(
   staves: Staff[],
   timeSignature: TimeSignature,
-  meta?: { title: string; composer: string; tempo: number },
+  meta?: {
+    title: string
+    composer: string
+    tempo: number
+    tempoBeat: Duration
+    tempoBeatDotted: boolean
+    tempoText: string
+  },
+  barlines?: Record<number, BarType>,
+  repeatCounts?: Record<number, number>,
 ): boolean {
   const payload: SavedScore = {
     version: 1,
     savedAt: new Date().toISOString(),
     staves,
     timeSignature,
+    barlines,
+    repeatCounts,
     title: meta?.title,
     composer: meta?.composer,
     tempo: meta?.tempo,
+    tempoBeat: meta?.tempoBeat,
+    tempoBeatDotted: meta?.tempoBeatDotted,
+    tempoText: meta?.tempoText,
   }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))

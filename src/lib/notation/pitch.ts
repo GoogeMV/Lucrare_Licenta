@@ -39,6 +39,30 @@ export function pitchIndex(pitch: Pitch): number {
   return pitch.octave * 7 + STEP_ORDER.indexOf(pitch.step)
 }
 
+/** Semitonul cromatic al unei trepte în interiorul octavei (C=0 … B=11) */
+const STEP_SEMITONE: Record<Step, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }
+
+/** Înălțimea în semitonuri cromatice (relativ, ca MIDI fără offset) — pentru
+ *  calculul fret-urilor în TAB (diferență de semitonuri = diferență de fret). */
+export function pitchSemitone(pitch: Pitch): number {
+  const acc = pitch.accidental === "sharp" ? 1 : pitch.accidental === "flat" ? -1 : 0
+  return pitch.octave * 12 + STEP_SEMITONE[pitch.step] + acc
+}
+
+/** Tabel semiton-în-octavă → (treaptă, alterație) — folosim diezi (convenția chitarei) */
+const SEMITONE_TO_STEP: [Step, Accidental?][] = [
+  ["C"], ["C", "sharp"], ["D"], ["D", "sharp"], ["E"], ["F"],
+  ["F", "sharp"], ["G"], ["G", "sharp"], ["A"], ["A", "sharp"], ["B"],
+]
+
+/** Inversul lui `pitchSemitone`: construiește o înălțime dintr-un semiton cromatic */
+export function semitoneToPitch(semitone: number): Pitch {
+  const octave = Math.floor(semitone / 12)
+  const within = ((semitone % 12) + 12) % 12
+  const [step, accidental] = SEMITONE_TO_STEP[within]
+  return accidental ? { step, octave, accidental } : { step, octave }
+}
+
 /**
  * Înălțimea cu treapta dată, la octava cea mai apropiată de nota de referință
  * (ca la introducerea notelor din tastatură în MuseScore: după Sol4, tasta C

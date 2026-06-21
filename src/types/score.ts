@@ -17,6 +17,9 @@ export interface Pitch {
   octave: number
   /** Alterația curentă a notei, dacă există (afișată lângă capul notei) */
   accidental?: Accidental
+  /** Coarda (1 = cea mai înaltă) pe care e fretată nota în TAB; absent = mapare
+   *  automată (fret-ul cel mai mic). Doar pentru chitară; nu schimbă înălțimea. */
+  string?: number
 }
 
 /** Tipul unei intrări pe portativ: notă (cu înălțime) sau pauză */
@@ -51,6 +54,16 @@ export interface NoteEntry {
   articulations?: Articulation[]
   /** Nuanța plasată pe această notă (rămâne în vigoare până la următoarea); absentă dacă nu există */
   dynamic?: Dynamic
+  /** Silaba de versuri scrisă sub notă (o singură strofă); absentă dacă nu există.
+   *  Pauzele nu poartă versuri — silabele se pun doar pe note. */
+  lyric?: string
+  /** Numărul de note al grupului de tuplet (3 = triolet) din care face parte
+   *  intrarea; absent = durată normală. Durata efectivă = durata notată ×
+   *  normal/tuplet (ex. optime de triolet = 0.5 × 2/3). */
+  tuplet?: number
+  /** Id-ul grupului de tuplet (delimitează trioletele alăturate); absent dacă
+   *  nu e într-un tuplet. Toate cele `tuplet` note ale unui grup îl împart. */
+  tupletId?: string
 }
 
 /**
@@ -65,6 +78,17 @@ export interface Slur {
 
 /** Cheia portativului — determină poziția înălțimilor pe linii */
 export type Clef = "treble" | "bass" | "alto"
+
+/**
+ * Tipul de bară special atașat unei măsuri (global, ca indicația de măsură):
+ *  - `repeat-begin` se desenează la ÎNCEPUTUL (stânga) măsurii (`‖:`);
+ *  - `repeat-end` / `double` / `final` la SFÂRȘITUL (dreapta) măsurii.
+ * Bara simplă (implicită, între măsuri) nu se stochează.
+ */
+export type BarType = "double" | "final" | "repeat-begin" | "repeat-end"
+
+/** Modul de afișare al unui portativ de chitară: notație, tablatură sau ambele */
+export type StaffDisplay = "notation" | "tab" | "both"
 
 /**
  * Un portativ (o linie de instrument) din partitură: are propria cheie și
@@ -83,6 +107,8 @@ export interface Staff {
    * legate printr-o acoladă (ex. pian: cheie sol + cheie fa).
    */
   groupId?: string
+  /** Modul de afișare (doar chitare): notație / TAB / ambele. Absent = notație. */
+  display?: StaffDisplay
   notes: NoteEntry[]
   slurs: Slur[]
 }

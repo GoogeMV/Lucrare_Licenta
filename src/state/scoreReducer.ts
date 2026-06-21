@@ -1,6 +1,7 @@
 import type {
   Accidental,
   Articulation,
+  BarType,
   Clef,
   Duration,
   Dynamic,
@@ -8,11 +9,16 @@ import type {
   NoteEntry,
   Pitch,
   Staff,
+  StaffDisplay,
   Step,
   TimeSignature,
 } from "@/types/score"
-import { nearestPitchWithStep, pitchIndex, stepDown, stepUp } from "@/lib/notation/pitch"
+import { nearestPitchWithStep, pitchIndex, pitchSemitone, semitoneToPitch, stepDown, stepUp } from "@/lib/notation/pitch"
+import { entryBeats, smallerDuration } from "@/lib/notation/duration"
 import { clefsForInstrument } from "@/lib/notation/instrument"
+import { decompose } from "@/lib/notation/measure"
+import { measureQuarters } from "@/lib/notation/timeSignature"
+import { tabPosition, tuningForInstrument } from "@/lib/notation/tab"
 
 /**
  * Generatoare de id-uri (efecte secundare, nu funcții pure) — centralizate aici
@@ -31,9 +37,15 @@ export function nextStaffId() {
 }
 
 let groupCounter = 0
-function nextGroupId() {
+export function nextGroupId() {
   groupCounter += 1
   return `group-${groupCounter}`
+}
+
+let tupletCounter = 0
+function nextTupletId() {
+  tupletCounter += 1
+  return `tuplet-${tupletCounter}`
 }
 
 /**
@@ -51,6 +63,7 @@ function syncIdCounters(staves: Staff[]) {
     groupCounter = bump(staff.groupId, "group-", groupCounter)
     for (const note of staff.notes) {
       idCounter = bump(note.id, "note-", idCounter)
+      tupletCounter = bump(note.tupletId, "tuplet-", tupletCounter)
     }
   }
 }
@@ -59,17 +72,31 @@ function syncIdCounters(staves: Staff[]) {
  *  și ca punct de pornire când inserăm o notă fără un context anterior. */
 export const DEFAULT_PITCH: Pitch = { step: "B", octave: 4 }
 
-/** O melodie scurtă de pornire, ca pagina să nu fie goală la prima deschidere. */
+/**
+ * Piesa implicită la prima deschidere: tema „Oda Bucuriei" (Beethoven, Simfonia a
+ * 9-a — domeniu public), în Do major, 4/4. 8 măsuri = fraza principală.
+ */
+const q = (step: Step, octave: number): NoteEntry => ({
+  id: nextId(),
+  type: "note",
+  pitches: [{ step, octave }],
+  duration: "quarter",
+})
 const INITIAL_NOTES: NoteEntry[] = [
-  { id: nextId(), type: "note", pitches: [{ step: "G", octave: 4 }], duration: "quarter" },
-  { id: nextId(), type: "note", pitches: [{ step: "B", octave: 4 }], duration: "quarter" },
-  { id: nextId(), type: "note", pitches: [{ step: "D", octave: 5 }], duration: "quarter" },
-  { id: nextId(), type: "note", pitches: [{ step: "C", octave: 5 }], duration: "quarter" },
-  { id: nextId(), type: "note", pitches: [{ step: "E", octave: 5 }], duration: "half" },
-  { id: nextId(), type: "note", pitches: [{ step: "G", octave: 4 }], duration: "quarter" },
-  { id: nextId(), type: "note", pitches: [{ step: "F", octave: 4 }], duration: "eighth" },
-  { id: nextId(), type: "note", pitches: [{ step: "G", octave: 4 }], duration: "eighth" },
-  { id: nextId(), type: "note", pitches: [{ step: "A", octave: 4 }], duration: "quarter" },
+  // Mi Mi Fa Sol | Sol Fa Mi Re | Do Do Re Mi | Mi. Re Re
+  q("E", 4), q("E", 4), q("F", 4), q("G", 4),
+  q("G", 4), q("F", 4), q("E", 4), q("D", 4),
+  q("C", 4), q("C", 4), q("D", 4), q("E", 4),
+  { id: nextId(), type: "note", pitches: [{ step: "E", octave: 4 }], duration: "quarter", dotted: true },
+  { id: nextId(), type: "note", pitches: [{ step: "D", octave: 4 }], duration: "eighth" },
+  { id: nextId(), type: "note", pitches: [{ step: "D", octave: 4 }], duration: "half" },
+  // Mi Mi Fa Sol | Sol Fa Mi Re | Do Do Re Mi | Re. Do Do
+  q("E", 4), q("E", 4), q("F", 4), q("G", 4),
+  q("G", 4), q("F", 4), q("E", 4), q("D", 4),
+  q("C", 4), q("C", 4), q("D", 4), q("E", 4),
+  { id: nextId(), type: "note", pitches: [{ step: "D", octave: 4 }], duration: "quarter", dotted: true },
+  { id: nextId(), type: "note", pitches: [{ step: "C", octave: 4 }], duration: "eighth" },
+  { id: nextId(), type: "note", pitches: [{ step: "C", octave: 4 }], duration: "half" },
 ]
 
 const INITIAL_STAFF: Staff = {
@@ -113,6 +140,12 @@ export interface ScoreState {
   selectedPitchIndex: number | null
   /** Durata curentă de input — folosită la adăugarea/inserarea de note noi */
   selectedDuration: Duration
+  /** Bare speciale per index de măsură (repetiții, bară finală/dublă). Global,
+   *  ca indicația de măsură. Lipsă/absent = bară simplă implicită. */
+  barlines: Record<number, BarType>
+  /** De câte ori se cântă secțiunea care se termină cu `repeat-end` pe acea măsură
+   *  (implicit 2). Cheia = index de măsură (același ca al barei repeat-end). */
+  repeatCounts: Record<number, number>
 }
 
 export type ScoreAction =
@@ -124,27 +157,43 @@ export type ScoreAction =
   | { type: "pasteNotes"; entries: NoteEntry[] }
   | { type: "moveSelection"; direction: "prev" | "next" }
   | { type: "addNoteAtPitch"; staffId: string; pitch: Pitch; beforeId?: string }
+  | { type: "addNoteAfterGap"; staffId: string; pitch: Pitch; gapBeats: number }
   | { type: "addPitchToNote"; noteId: string; pitch: Pitch }
   | { type: "insertNote" }
   | { type: "insertNoteWithStep"; step: Step }
+  | { type: "insertNoteWithPitch"; pitch: Pitch }
+  | { type: "addPitchToSelectedNote"; pitch: Pitch }
   | { type: "insertRest"; duration: Duration }
   | { type: "setDuration"; duration: Duration }
   | { type: "transposeSelected"; direction: "up" | "down" }
   | { type: "toggleAccidental"; accidental: Accidental }
   | { type: "toggleArticulation"; articulation: Articulation }
   | { type: "setDynamic"; dynamic: Dynamic }
+  | { type: "setLyric"; id: string; text: string }
   | { type: "toggleDot" }
+  | { type: "makeTriplet" }
   | { type: "toggleRest" }
   | { type: "toggleSlur" }
   | { type: "setKeySignature"; keySignature: KeySignature }
   | { type: "setClef"; clef: Clef }
+  | { type: "setStaffDisplay"; staffId: string; display: StaffDisplay }
+  | { type: "setFret"; fret: number }
   | { type: "setTimeSignature"; timeSignature: TimeSignature }
+  | { type: "setBarline"; barType: BarType }
+  | { type: "setRepeatCount"; times: number }
   | { type: "addStaff"; instrument: string }
   | { type: "removeStaff"; staffId: string }
   | { type: "setActiveStaff"; staffId: string }
   | { type: "toggleStaffSelection"; staffId: string }
+  | { type: "clearStaffSelection" }
   | { type: "deleteSelected" }
-  | { type: "loadScore"; staves: Staff[]; timeSignature: TimeSignature }
+  | {
+      type: "loadScore"
+      staves: Staff[]
+      timeSignature: TimeSignature
+      barlines?: Record<number, BarType>
+      repeatCounts?: Record<number, number>
+    }
   | { type: "newScore" }
 
 export const initialScoreState: ScoreState = {
@@ -157,6 +206,8 @@ export const initialScoreState: ScoreState = {
   selectionAnchorId: null,
   selectedPitchIndex: null,
   selectedDuration: "quarter",
+  barlines: {},
+  repeatCounts: {},
 }
 
 /**
@@ -183,6 +234,9 @@ function cloneEntry(entry: NoteEntry): Omit<NoteEntry, "id"> {
     dotted: entry.dotted,
     articulations: entry.articulations ? [...entry.articulations] : undefined,
     dynamic: entry.dynamic,
+    lyric: entry.lyric,
+    tuplet: entry.tuplet,
+    tupletId: entry.tupletId,
   }
 }
 
@@ -198,6 +252,21 @@ function staffOfNote(state: ScoreState, id: string | null): Staff | undefined {
   return state.staves.find((s) => s.notes.some((n) => n.id === id))
 }
 
+/** Indexul măsurii în care se află nota selectată (sau `null`) — pentru barele
+ *  și repetițiile atașate „măsurii notei selectate". */
+function selectedMeasureIndex(state: ScoreState): number | null {
+  if (!state.selectedId) return null
+  const staff = staffOfNote(state, state.selectedId)
+  if (!staff) return null
+  const beatsPerMeasure = measureQuarters(state.timeSignature)
+  let beat = 0
+  for (const n of staff.notes) {
+    if (n.id === state.selectedId) return Math.floor(beat / beatsPerMeasure + 1e-9)
+    beat += entryBeats(n)
+  }
+  return null
+}
+
 /** Înlocuiește un portativ după id, printr-o funcție de transformare */
 function updateStaff(state: ScoreState, staffId: string, fn: (s: Staff) => Staff): ScoreState {
   return { ...state, staves: state.staves.map((s) => (s.id === staffId ? fn(s) : s)) }
@@ -211,6 +280,27 @@ function updateNote(state: ScoreState, id: string, fn: (n: NoteEntry) => NoteEnt
     ...s,
     notes: s.notes.map((n) => (n.id === id ? fn(n) : n)),
   }))
+}
+
+/** Transformă, în TOATE portativele, notele al căror id e în `ids` — pentru
+ *  operații pe o selecție care poate cuprinde mai multe portative (Alt+click). */
+function updateNotesInIds(state: ScoreState, ids: Set<string>, fn: (n: NoteEntry) => NoteEntry): ScoreState {
+  return {
+    ...state,
+    staves: state.staves.map((s) =>
+      s.notes.some((n) => ids.has(n.id))
+        ? { ...s, notes: s.notes.map((n) => (ids.has(n.id) ? fn(n) : n)) }
+        : s,
+    ),
+  }
+}
+
+/** Toate notele selectate, din toate portativele, în ordine */
+function selectedEntries(state: ScoreState): NoteEntry[] {
+  const ids = new Set(state.selectedIds)
+  const out: NoteEntry[] = []
+  for (const s of state.staves) for (const n of s.notes) if (ids.has(n.id)) out.push(n)
+  return out
 }
 
 /** Inserează o intrare în portativul activ, după nota selectată (sau la final) */
@@ -259,25 +349,20 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
 
     case "toggleNoteInSelection": {
       // Alt+click (ca Ctrl pe Windows): adaugă/scoate o notă individuală din
-      // selecție (ne-contiguu). Selecția rămâne într-un singur portativ — o notă
-      // din alt portativ pornește o selecție nouă.
+      // selecție (ne-contiguu). Poate cuprinde MAI MULTE portative — ca să poți
+      // reda segmente de pe instrumente diferite (Space le redă grupate pe portativ).
       const targetStaff = staffOfNote(state, action.id)
       if (!targetStaff) return state
-      const currentStaff = staffOfNote(state, state.selectedId)
-      if (!currentStaff || currentStaff.id !== targetStaff.id || state.selectedIds.length === 0) {
-        return { ...state, ...selectSingle(action.id), activeStaffId: targetStaff.id }
-      }
-      let nextIds: string[]
-      if (state.selectedIds.includes(action.id)) {
-        nextIds = state.selectedIds.filter((id) => id !== action.id)
-      } else {
-        // adăugăm păstrând ordinea din portativ
-        const set = new Set([...state.selectedIds, action.id])
-        nextIds = targetStaff.notes.filter((n) => set.has(n.id)).map((n) => n.id)
-      }
+      const set = new Set(state.selectedIds)
+      const removing = set.has(action.id)
+      if (removing) set.delete(action.id)
+      else set.add(action.id)
+      // ordonăm după portativ, apoi după poziția în portativ (ordine stabilă)
+      const nextIds: string[] = []
+      for (const s of state.staves) for (const n of s.notes) if (set.has(n.id)) nextIds.push(n.id)
       if (nextIds.length === 0) return { ...state, ...selectSingle(null) }
       // capul = nota apăsată dacă a rămas selectată, altfel ultima rămasă
-      const head = nextIds.includes(action.id) ? action.id : nextIds[nextIds.length - 1]
+      const head = set.has(action.id) ? action.id : nextIds[nextIds.length - 1]
       return {
         ...state,
         selectedId: head,
@@ -385,6 +470,30 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
       return { ...next, activeStaffId: action.staffId, ...selectSingle(entry.id) }
     }
 
+    case "addNoteAfterGap": {
+      // click pe un portativ dincolo de notele lui existente: umplem golul cu
+      // pauze (până la măsura în care s-a dat click), apoi adăugăm nota. Așa
+      // nota apare unde s-a dat click, nu lipită de ultima notă existentă.
+      const rests: NoteEntry[] = decompose(action.gapBeats).map((piece) => ({
+        id: nextId(),
+        type: "rest",
+        pitches: [DEFAULT_PITCH],
+        duration: piece.duration,
+        dotted: piece.dotted,
+      }))
+      const note: NoteEntry = {
+        id: nextId(),
+        type: "note",
+        pitches: [action.pitch],
+        duration: state.selectedDuration,
+      }
+      const next = updateStaff(state, action.staffId, (s) => ({
+        ...s,
+        notes: [...s.notes, ...rests, note],
+      }))
+      return { ...next, activeStaffId: action.staffId, ...selectSingle(note.id) }
+    }
+
     case "addPitchToNote": {
       // adaugă o înălțime la o notă existentă → acord (sortat ascendent);
       // dublurile sunt ignorate. Pauzele nu devin acorduri.
@@ -438,6 +547,26 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
       return insertInActiveStaff(state, entry)
     }
 
+    case "insertNoteWithPitch": {
+      // introducere MIDI: o notă nouă la înălțimea EXACTĂ primită (octava dată),
+      // inserată după nota selectată (ca litera C–B, dar fără calcul de octavă)
+      const entry: NoteEntry = {
+        id: nextId(),
+        type: "note",
+        pitches: [action.pitch],
+        duration: state.selectedDuration,
+      }
+      return insertInActiveStaff(state, entry)
+    }
+
+    case "addPitchToSelectedNote": {
+      // a doua (a treia…) tastă MIDI ținută simultan → acord pe nota tocmai
+      // inserată (cea selectată). Reducer-ul procesează secvențial, deci selectedId
+      // e deja nota nouă; refolosim logica de la addPitchToNote.
+      if (!state.selectedId) return state
+      return scoreReducer(state, { type: "addPitchToNote", noteId: state.selectedId, pitch: action.pitch })
+    }
+
     case "insertRest": {
       const entry: NoteEntry = {
         id: nextId(),
@@ -450,14 +579,9 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
 
     case "setDuration": {
       if (!state.selectedId) return { ...state, selectedDuration: action.duration }
-      const staff = staffOfNote(state, state.selectedId)
-      if (!staff) return { ...state, selectedDuration: action.duration }
       const ids = new Set(state.selectedIds)
       return {
-        ...updateStaff(state, staff.id, (s) => ({
-          ...s,
-          notes: s.notes.map((n) => (ids.has(n.id) ? { ...n, duration: action.duration } : n)),
-        })),
+        ...updateNotesInIds(state, ids, (n) => ({ ...n, duration: action.duration })),
         selectedDuration: action.duration,
       }
     }
@@ -465,17 +589,12 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
     case "transposeSelected": {
       if (!state.selectedId) return state
       const move = action.direction === "up" ? stepUp : stepDown
-      // selecție multiplă (interval): mutăm toate notele, ignorând înălțimea individuală
+      // selecție multiplă (interval, eventual pe mai multe portative): mutăm toate
       if (state.selectedIds.length > 1) {
         const ids = new Set(state.selectedIds)
-        const staff = staffOfNote(state, state.selectedId)
-        if (!staff) return state
-        return updateStaff(state, staff.id, (s) => ({
-          ...s,
-          notes: s.notes.map((n) =>
-            ids.has(n.id) && n.type === "note" ? { ...n, pitches: n.pitches.map(move) } : n,
-          ),
-        }))
+        return updateNotesInIds(state, ids, (n) =>
+          n.type === "note" ? { ...n, pitches: n.pitches.map(move) } : n,
+        )
       }
       // cu o înălțime selectată din acord, doar ea se mută (re-sortăm și urmărim
       // noul ei indice; mutarea peste o înălțime existentă e refuzată)
@@ -500,24 +619,17 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
 
     case "toggleAccidental": {
       if (!state.selectedId) return state
-      // interval: aplicăm aceeași alterație tuturor înălțimilor din toate notele
-      // (regula "toate au -> scoatem; altfel -> punem peste tot")
+      // interval (eventual pe mai multe portative): aplicăm aceeași alterație
+      // tuturor înălțimilor ("toate au -> scoatem; altfel -> punem peste tot")
       if (state.selectedIds.length > 1) {
         const ids = new Set(state.selectedIds)
-        const staff = staffOfNote(state, state.selectedId)
-        if (!staff) return state
-        const sel = staff.notes.filter((n) => ids.has(n.id) && n.type === "note")
+        const sel = selectedEntries(state).filter((n) => n.type === "note")
         const allHave =
           sel.length > 0 && sel.every((n) => n.pitches.every((p) => p.accidental === action.accidental))
         const nextAcc = allHave ? undefined : action.accidental
-        return updateStaff(state, staff.id, (s) => ({
-          ...s,
-          notes: s.notes.map((n) =>
-            ids.has(n.id) && n.type === "note"
-              ? { ...n, pitches: n.pitches.map((p) => ({ ...p, accidental: nextAcc })) }
-              : n,
-          ),
-        }))
+        return updateNotesInIds(state, ids, (n) =>
+          n.type === "note" ? { ...n, pitches: n.pitches.map((p) => ({ ...p, accidental: nextAcc })) } : n,
+        )
       }
       const pitchIdx = state.selectedPitchIndex
       return updateNote(state, state.selectedId, (n) => {
@@ -540,56 +652,83 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
 
     case "toggleArticulation": {
       if (!state.selectedId) return state
-      const staff = staffOfNote(state, state.selectedId)
-      if (!staff) return state
       const ids = new Set(state.selectedIds)
       // regula "toate o au -> scoatem; altfel -> adăugăm unde lipsește"
-      const sel = staff.notes.filter((n) => ids.has(n.id) && n.type === "note")
+      const sel = selectedEntries(state).filter((n) => n.type === "note")
       const allHave =
         sel.length > 0 && sel.every((n) => (n.articulations ?? []).includes(action.articulation))
-      return updateStaff(state, staff.id, (s) => ({
-        ...s,
-        notes: s.notes.map((n) => {
-          if (!ids.has(n.id) || n.type !== "note") return n
-          const current = n.articulations ?? []
-          const next = allHave
-            ? current.filter((a) => a !== action.articulation)
-            : current.includes(action.articulation)
-              ? current
-              : [...current, action.articulation]
-          return { ...n, articulations: next.length > 0 ? next : undefined }
-        }),
-      }))
+      return updateNotesInIds(state, ids, (n) => {
+        if (n.type !== "note") return n
+        const current = n.articulations ?? []
+        const next = allHave
+          ? current.filter((a) => a !== action.articulation)
+          : current.includes(action.articulation)
+            ? current
+            : [...current, action.articulation]
+        return { ...n, articulations: next.length > 0 ? next : undefined }
+      })
     }
 
     case "setDynamic": {
       // nuanță (dinamică) pe notele selectate — regula "toate o au -> scoatem;
       // altfel -> punem peste tot" (la o selecție simplă = comutator obișnuit)
       if (!state.selectedId) return state
-      const staff = staffOfNote(state, state.selectedId)
-      if (!staff) return state
       const ids = new Set(state.selectedIds)
-      const sel = staff.notes.filter((n) => ids.has(n.id))
+      const sel = selectedEntries(state)
       const allHave = sel.length > 0 && sel.every((n) => n.dynamic === action.dynamic)
       const next = allHave ? undefined : action.dynamic
-      return updateStaff(state, staff.id, (s) => ({
-        ...s,
-        notes: s.notes.map((n) => (ids.has(n.id) ? { ...n, dynamic: next } : n)),
-      }))
+      return updateNotesInIds(state, ids, (n) => ({ ...n, dynamic: next }))
+    }
+
+    case "setLyric": {
+      // silaba de versuri sub o notă (pauzele nu poartă versuri). Golirea o
+      // șterge. Sărim peste no-op-uri ca să nu aglomerăm istoricul de undo.
+      const text = action.text.trim() || undefined
+      const staff = staffOfNote(state, action.id)
+      const entry = staff?.notes.find((n) => n.id === action.id)
+      if (!staff || !entry || entry.type !== "note" || entry.lyric === text) return state
+      return updateNote(state, action.id, (n) => ({ ...n, lyric: text }))
     }
 
     case "toggleDot": {
       // punct de prelungire (durata +50%) — valabil și pentru pauze
       if (!state.selectedId) return state
+      const ids = new Set(state.selectedIds)
+      const sel = selectedEntries(state)
+      const allDotted = sel.length > 0 && sel.every((n) => n.dotted)
+      return updateNotesInIds(state, ids, (n) => ({ ...n, dotted: allDotted ? undefined : true }))
+    }
+
+    case "makeTriplet": {
+      // transformă intrarea selectată într-un triolet: o înlocuiește cu 3 intrări
+      // egale (aceeași înălțime/tip) de durata imediat mai mică (ex. pătrime → 3
+      // optimi de triolet), care ocupă același timp — deci se aude ca un triolet
+      // din prima. Doar prima păstrează articulațiile/nuanța/versul. Refuzat dacă
+      // e deja triolet sau prea mic (șaisprezecime).
+      if (!state.selectedId) return state
       const staff = staffOfNote(state, state.selectedId)
       if (!staff) return state
-      const ids = new Set(state.selectedIds)
-      const sel = staff.notes.filter((n) => ids.has(n.id))
-      const allDotted = sel.length > 0 && sel.every((n) => n.dotted)
-      return updateStaff(state, staff.id, (s) => ({
-        ...s,
-        notes: s.notes.map((n) => (ids.has(n.id) ? { ...n, dotted: allDotted ? undefined : true } : n)),
-      }))
+      const idx = staff.notes.findIndex((n) => n.id === state.selectedId)
+      const entry = staff.notes[idx]
+      if (!entry || entry.tuplet) return state
+      const sub = smallerDuration(entry.duration)
+      if (!sub) return state
+      const tupletId = nextTupletId()
+      const member = (withExtras: boolean): NoteEntry => ({
+        id: nextId(),
+        type: entry.type,
+        pitches: entry.pitches.map((p) => ({ ...p })),
+        duration: sub,
+        tuplet: 3,
+        tupletId,
+        articulations: withExtras ? entry.articulations : undefined,
+        dynamic: withExtras ? entry.dynamic : undefined,
+        lyric: withExtras ? entry.lyric : undefined,
+      })
+      const triplet = [member(true), member(false), member(false)]
+      const notes = [...staff.notes]
+      notes.splice(idx, 1, ...triplet)
+      return { ...updateStaff(state, staff.id, (s) => ({ ...s, notes })), ...selectSingle(triplet[0].id) }
     }
 
     case "toggleRest": {
@@ -597,16 +736,11 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
       // și înălțimile stocate — P înapoi restaurează nota (inclusiv acordul).
       // Pe un interval: dacă toate sunt pauze -> note; altfel -> pauze.
       if (!state.selectedId) return state
-      const staff = staffOfNote(state, state.selectedId)
-      if (!staff) return state
       const ids = new Set(state.selectedIds)
-      const sel = staff.notes.filter((n) => ids.has(n.id))
+      const sel = selectedEntries(state)
       const allRest = sel.length > 0 && sel.every((n) => n.type === "rest")
       const nextType: NoteEntry["type"] = allRest ? "note" : "rest"
-      return updateStaff(state, staff.id, (s) => ({
-        ...s,
-        notes: s.notes.map((n) => (ids.has(n.id) ? { ...n, type: nextType } : n)),
-      }))
+      return updateNotesInIds(state, ids, (n) => ({ ...n, type: nextType }))
     }
 
     case "toggleSlur": {
@@ -631,8 +765,52 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
       // cheia (clef) e per portativ — schimbă doar portativul activ
       return updateStaff(state, state.activeStaffId, (s) => ({ ...s, clef: action.clef }))
 
+    case "setStaffDisplay":
+      // modul de afișare (notație / TAB / ambele) — doar pentru chitare
+      return updateStaff(state, action.staffId, (s) => ({ ...s, display: action.display }))
+
+    case "setFret": {
+      // setează fret-ul notei selectate pe coarda ei (sau cea auto), schimbând
+      // înălțimea; coarda aleasă se reține ca TAB-ul să rămână pe ea
+      if (!state.selectedId) return state
+      const staff = staffOfNote(state, state.selectedId)
+      if (!staff) return state
+      const pIdx = state.selectedPitchIndex ?? 0
+      const fret = Math.max(0, Math.min(24, action.fret))
+      const tuning = tuningForInstrument(staff.instrument).map(pitchSemitone)
+      return updateNote(state, state.selectedId, (n) => {
+        if (n.type !== "note" || !n.pitches[pIdx]) return n
+        const cur = n.pitches[pIdx]
+        const str = cur.string ?? tabPosition(cur, staff.instrument).str
+        const semitone = tuning[str - 1] + fret
+        const next: Pitch = { ...semitoneToPitch(semitone), string: str }
+        return { ...n, pitches: n.pitches.map((p, i) => (i === pIdx ? next : p)) }
+      })
+    }
+
     case "setTimeSignature":
       return { ...state, timeSignature: action.timeSignature }
+
+    case "setBarline": {
+      // bara se atașează măsurii notei selectate; re-aplicarea aceluiași tip o scoate
+      const measureIndex = selectedMeasureIndex(state)
+      if (measureIndex === null) return state
+      const barlines = { ...state.barlines }
+      if (barlines[measureIndex] === action.barType) delete barlines[measureIndex]
+      else barlines[measureIndex] = action.barType
+      // numărul de repetări are sens doar pentru repeat-end; altfel îl curățăm
+      const repeatCounts = { ...state.repeatCounts }
+      if (barlines[measureIndex] !== "repeat-end") delete repeatCounts[measureIndex]
+      return { ...state, barlines, repeatCounts }
+    }
+
+    case "setRepeatCount": {
+      // de câte ori se cântă secțiunea (2..8), pe măsura cu repeat-end a notei selectate
+      const measureIndex = selectedMeasureIndex(state)
+      if (measureIndex === null || state.barlines[measureIndex] !== "repeat-end") return state
+      const times = Math.max(2, Math.min(8, Math.round(action.times)))
+      return { ...state, repeatCounts: { ...state.repeatCounts, [measureIndex]: times } }
+    }
 
     case "addStaff": {
       // instrumentele cu portativ dublu (pian/orgă) adaugă două portative legate
@@ -702,6 +880,10 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
       return { ...state, selectedStaffIds }
     }
 
+    case "clearStaffSelection":
+      // golește bifarea portativelor pentru redare parțială (ex. la Esc)
+      return state.selectedStaffIds.length === 0 ? state : { ...state, selectedStaffIds: [] }
+
     case "deleteSelected": {
       const staff = staffOfNote(state, state.selectedId)
       if (!staff || !state.selectedId) return state
@@ -722,17 +904,19 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
           selectedPitchIndex: null,
         }
       }
-      // ștergem tot intervalul selectat; selecția "alunecă" pe elementul din
-      // stânga primei note șterse (ca în MuseScore)
+      // ștergem selecția din TOATE portativele (poate cuprinde mai multe);
+      // selecția "alunecă" pe elementul din stânga primei note șterse din
+      // portativul capului (ca în MuseScore)
       const ids = new Set(state.selectedIds)
       const firstIndex = staff.notes.findIndex((n) => ids.has(n.id))
-      const remaining = staff.notes.filter((n) => !ids.has(n.id))
-      const slurs = staff.slurs.filter((s) => !ids.has(s.fromId) && !ids.has(s.toId))
-      const selectedId = remaining.length > 0 ? remaining[Math.max(0, firstIndex - 1)].id : null
-      return {
-        ...updateStaff(state, staff.id, (s) => ({ ...s, notes: remaining, slurs })),
-        ...selectSingle(selectedId),
-      }
+      const staves = state.staves.map((s) => ({
+        ...s,
+        notes: s.notes.filter((n) => !ids.has(n.id)),
+        slurs: s.slurs.filter((sl) => !ids.has(sl.fromId) && !ids.has(sl.toId)),
+      }))
+      const remainingHead = staves.find((s) => s.id === staff.id)?.notes ?? []
+      const selectedId = remainingHead.length > 0 ? remainingHead[Math.max(0, firstIndex - 1)].id : null
+      return { ...state, staves, ...selectSingle(selectedId) }
     }
 
     case "loadScore": {
@@ -743,6 +927,8 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
         ...state,
         staves: action.staves,
         timeSignature: action.timeSignature,
+        barlines: action.barlines ?? {},
+        repeatCounts: action.repeatCounts ?? {},
         activeStaffId: action.staves[0].id,
         selectedStaffIds: [],
         ...selectSingle(null),
@@ -762,6 +948,8 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
         ...state,
         staves: [staff],
         timeSignature: { numerator: 4, denominator: 4 },
+        barlines: {},
+        repeatCounts: {},
         activeStaffId: staff.id,
         selectedStaffIds: [],
         ...selectSingle(null),
@@ -823,7 +1011,10 @@ export function historyReducer(history: HistoryState, action: HistoryAction): Hi
   if (present === history.present) return history
 
   const contentChanged =
-    present.staves !== history.present.staves || present.timeSignature !== history.present.timeSignature
+    present.staves !== history.present.staves ||
+    present.timeSignature !== history.present.timeSignature ||
+    present.barlines !== history.present.barlines ||
+    present.repeatCounts !== history.present.repeatCounts
   if (!contentChanged) return { ...history, present }
 
   return {
