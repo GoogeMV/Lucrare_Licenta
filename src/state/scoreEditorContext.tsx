@@ -135,12 +135,12 @@ export function ScoreEditorProvider({ children }: { children: ReactNode }) {
   const [player] = useState(() => new ScorePlayer())
   useEffect(() => () => player.stop(), [player])
   const [meta, setMetaState] = useState<ScoreMeta>({
-    title: "",
-    composer: "",
+    title: "Oda Bucuriei",
+    composer: "Ludwig van Beethoven",
     tempo: 120,
     tempoBeat: "quarter",
     tempoBeatDotted: false,
-    tempoText: "",
+    tempoText: "Allegro",
   })
 
   return (

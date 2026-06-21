@@ -1,5 +1,9 @@
 # Rulează tot stack-ul containerizat: `docker compose up --build`
 # Frontend: http://localhost:8080  ·  API proxat prin nginx la /api  ·  PostgreSQL
+#
+# Acordare admin (rol doar prin CLI, niciodată prin API):
+#   docker compose exec server npm run admin -- set <email> on
+#   docker compose exec server npm run admin -- list
 services:
   db:
     image: postgres:16-alpine
@@ -22,6 +26,13 @@ services:
       PORT: "4000"
       JWT_SECRET: ${JWT_SECRET:-schimba-ma-in-productie}
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/notationsoft
+      # URL-ul frontend-ului (redirect Stripe după plată). În stack-ul Docker
+      # web-ul e pe :8080.
+      CLIENT_URL: ${CLIENT_URL:-http://localhost:8080}
+      # Plăți (OPȚIONAL): fără chei Stripe, upgrade-ul la Pro folosește pagina de
+      # plată SIMULATĂ (demo). Pune-le în `.env`-ul din rădăcină pentru Stripe test.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PRICE_ID: ${STRIPE_PRICE_ID:-}
     depends_on:
       db:
         condition: service_healthy

@@ -72,17 +72,31 @@ function syncIdCounters(staves: Staff[]) {
  *  și ca punct de pornire când inserăm o notă fără un context anterior. */
 export const DEFAULT_PITCH: Pitch = { step: "B", octave: 4 }
 
-/** O melodie scurtă de pornire, ca pagina să nu fie goală la prima deschidere. */
+/**
+ * Piesa implicită la prima deschidere: tema „Oda Bucuriei" (Beethoven, Simfonia a
+ * 9-a — domeniu public), în Do major, 4/4. 8 măsuri = fraza principală.
+ */
+const q = (step: Step, octave: number): NoteEntry => ({
+  id: nextId(),
+  type: "note",
+  pitches: [{ step, octave }],
+  duration: "quarter",
+})
 const INITIAL_NOTES: NoteEntry[] = [
-  { id: nextId(), type: "note", pitches: [{ step: "G", octave: 4 }], duration: "quarter" },
-  { id: nextId(), type: "note", pitches: [{ step: "B", octave: 4 }], duration: "quarter" },
-  { id: nextId(), type: "note", pitches: [{ step: "D", octave: 5 }], duration: "quarter" },
-  { id: nextId(), type: "note", pitches: [{ step: "C", octave: 5 }], duration: "quarter" },
-  { id: nextId(), type: "note", pitches: [{ step: "E", octave: 5 }], duration: "half" },
-  { id: nextId(), type: "note", pitches: [{ step: "G", octave: 4 }], duration: "quarter" },
-  { id: nextId(), type: "note", pitches: [{ step: "F", octave: 4 }], duration: "eighth" },
-  { id: nextId(), type: "note", pitches: [{ step: "G", octave: 4 }], duration: "eighth" },
-  { id: nextId(), type: "note", pitches: [{ step: "A", octave: 4 }], duration: "quarter" },
+  // Mi Mi Fa Sol | Sol Fa Mi Re | Do Do Re Mi | Mi. Re Re
+  q("E", 4), q("E", 4), q("F", 4), q("G", 4),
+  q("G", 4), q("F", 4), q("E", 4), q("D", 4),
+  q("C", 4), q("C", 4), q("D", 4), q("E", 4),
+  { id: nextId(), type: "note", pitches: [{ step: "E", octave: 4 }], duration: "quarter", dotted: true },
+  { id: nextId(), type: "note", pitches: [{ step: "D", octave: 4 }], duration: "eighth" },
+  { id: nextId(), type: "note", pitches: [{ step: "D", octave: 4 }], duration: "half" },
+  // Mi Mi Fa Sol | Sol Fa Mi Re | Do Do Re Mi | Re. Do Do
+  q("E", 4), q("E", 4), q("F", 4), q("G", 4),
+  q("G", 4), q("F", 4), q("E", 4), q("D", 4),
+  q("C", 4), q("C", 4), q("D", 4), q("E", 4),
+  { id: nextId(), type: "note", pitches: [{ step: "D", octave: 4 }], duration: "quarter", dotted: true },
+  { id: nextId(), type: "note", pitches: [{ step: "C", octave: 4 }], duration: "eighth" },
+  { id: nextId(), type: "note", pitches: [{ step: "C", octave: 4 }], duration: "half" },
 ]
 
 const INITIAL_STAFF: Staff = {

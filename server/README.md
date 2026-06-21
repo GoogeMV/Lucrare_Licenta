@@ -18,8 +18,7 @@ createdb notationsoft
 ```bash
 cd server
 npm install
-cp .env.example .env   # (Windows: copy .env.example .env)
-# editează .env: schimbă JWT_SECRET și pune DATABASE_URL corect
+# creează .env cu JWT_SECRET și DATABASE_URL (vezi mai jos)
 npm run dev            # node --watch src/index.js  → http://localhost:4000
 ```
 
