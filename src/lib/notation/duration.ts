@@ -26,14 +26,6 @@ export const DURATION_LABELS: Record<Duration, string> = {
   sixteenth: "Șaisprezecime",
 }
 
-export const DURATION_SYMBOLS: Record<Duration, string> = {
-  whole: "𝅝",
-  half: "𝅗𝅥",
-  quarter: "♩",
-  eighth: "♪",
-  sixteenth: "𝅘𝅥𝅯",
-}
-
 export const DURATIONS: Duration[] = ["whole", "half", "quarter", "eighth", "sixteenth"]
 
 /** Valorile de notă oferite ca unitate de bătaie pentru indicația de tempo
@@ -96,14 +88,6 @@ export const REST_HOTKEYS: Record<string, Duration> = {
   d: "quarter",
   f: "eighth",
   g: "sixteenth",
-}
-
-export const REST_HOTKEY_LABELS: Record<Duration, string> = {
-  whole: "A",
-  half: "S",
-  quarter: "D",
-  eighth: "F",
-  sixteenth: "G",
 }
 
 /** Codul de durată VexFlow pentru o intrare — adaugă sufixul "r" pentru pauze (ex. "qr") */
