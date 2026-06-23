@@ -1,6 +1,15 @@
 import bcrypt from "bcryptjs"
 import jwt from "jsonwebtoken"
 
+// În producție secretul e OBLIGATORIU — altfel tokenele ar fi semnate cu o valoare
+// cunoscută public (oricine ar putea forja sesiuni). În dev permitem un fallback,
+// dar avertizăm zgomotos.
+if (!process.env.JWT_SECRET) {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("JWT_SECRET lipsește — setează-l în .env înainte de a porni în producție")
+  }
+  console.warn("⚠ JWT_SECRET nesetat — folosesc un secret de DEV (NU pentru producție)")
+}
 const SECRET = process.env.JWT_SECRET || "dev-secret-schimba-ma"
 const TOKEN_TTL = "30d"
 

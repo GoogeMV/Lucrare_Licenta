@@ -23,6 +23,7 @@ services:
   server:
     build: ./server
     environment:
+      NODE_ENV: production
       PORT: "4000"
       JWT_SECRET: ${JWT_SECRET:-schimba-ma-in-productie}
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/notationsoft
