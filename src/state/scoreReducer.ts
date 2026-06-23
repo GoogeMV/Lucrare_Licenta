@@ -920,6 +920,9 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
     }
 
     case "loadScore": {
+      // gardă: o partitură fără portative (payload corupt din localStorage / import
+      // malformat) ar strica starea (accesăm staves[0]) — o ignorăm
+      if (!Array.isArray(action.staves) || action.staves.length === 0) return state
       // adusă din localStorage — aliniem contoarele de id-uri ca să nu generăm
       // duplicate (generatoarele sunt efectele secundare asumate ale modulului)
       syncIdCounters(action.staves)

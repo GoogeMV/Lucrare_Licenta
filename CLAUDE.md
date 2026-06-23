@@ -4,6 +4,11 @@ Editor de notație muzicală în browser, în stilul MuseScore. **WIP — UI-ul 
 e intenționat** (ex. butoanele Temă/Cont): evaluează fundația și direcția, nu
 completitudinea. UI-ul și comentariile sunt în **română** — păstrează convenția.
 
+> **Pentru ajutor la LUCRAREA DE LICENȚĂ (documentația scrisă):** citește
+> `.claude/documentatie-context.md` — conține tot contextul (stack + justificări,
+> arhitectură, funcționalități, decizii de design, securitate, testare, limitări)
+> mapabil pe schița profesorului. Cere utilizatorului schița/outline-ul cerut.
+
 ## Comenzi
 
 ```bash
