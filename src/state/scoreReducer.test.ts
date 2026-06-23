@@ -86,4 +86,15 @@ describe("historyReducer (undo/redo)", () => {
     const h4 = historyReducer(h3, { type: "redo" })
     expect(h4.present.staves[0].notes[0].pitches[0]).toEqual({ step: "F", octave: 4 })
   })
+
+  it("setDuration `live` schimbă conținutul DAR fără pas nou de undo (preview MIDI)", () => {
+    let h = historyReducer(initialHistoryState, { type: "selectNote", id: firstId })
+    // o schimbare normală de durată = un pas de undo
+    h = historyReducer(h, { type: "setDuration", duration: "half" })
+    const pastLen = h.past.length
+    // update-ul live amendează present, fără să crească istoricul
+    h = historyReducer(h, { type: "setDuration", duration: "whole", live: true })
+    expect(h.past.length).toBe(pastLen)
+    expect(h.present.staves[0].notes[0].duration).toBe("whole")
+  })
 })

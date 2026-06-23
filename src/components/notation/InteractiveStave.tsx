@@ -21,18 +21,19 @@ import {
 } from "vexflow"
 import { useScoreEditor, type Theme } from "@/state/scoreEditorContext"
 import { buildStaffPositions, pitchIndex, pitchToVexflowKey, semitoneToPitch, TOP_LINE_PITCH } from "@/lib/notation/pitch"
-import { DURATION_HOTKEYS, REST_HOTKEYS, entryBeats, playbackQuarterBpm, tupletNormal, vexflowDurationCode } from "@/lib/notation/duration"
+import { DURATION_HOTKEYS, REST_HOTKEYS, entryBeats, playbackQuarterBpm, quantizeBeatsToDuration, tupletNormal, vexflowDurationCode } from "@/lib/notation/duration"
 import { splitIntoMeasures, expandRepeats, type MeasureFragment } from "@/lib/notation/measure"
 import { ACCIDENTAL_HOTKEYS, ACCIDENTAL_TO_VEXFLOW } from "@/lib/notation/accidental"
 import { ARTICULATION_TO_VEXFLOW } from "@/lib/notation/articulation"
 import { keyAccidentalCount } from "@/lib/notation/keySignature"
 import { instrumentLabel } from "@/lib/notation/instrument"
 import { openStringPitch, stringCountForInstrument, supportsTab, tabPositionsForChord } from "@/lib/notation/tab"
+import { longestPartIndex } from "@/lib/audio/playback"
 import { onPlaybackHighlight, emitPlaybackHighlight } from "@/lib/audio/playbackHighlight"
 import { auditionPitches, stopAudition } from "@/lib/audio/audition"
-import { onMidiNoteOn, onMidiNoteOff } from "@/lib/midi/midiInput"
+import { onMidiNoteOn, onMidiNoteOff, isMidiDurationFromHold, setMidiDurationFromHold, isMidiEnabled } from "@/lib/midi/midiInput"
 import { measureQuarters, timeSignatureLabel } from "@/lib/notation/timeSignature"
-import type { BarType, Clef, NoteEntry, Pitch, Step } from "@/types/score"
+import type { BarType, Clef, Duration, NoteEntry, Pitch, Step } from "@/types/score"
 
 const STAVE_GRADIENT_ID = "stave-cream-to-gold"
 const SVG_NS = "http://www.w3.org/2000/svg"
@@ -1487,20 +1488,72 @@ export function InteractiveStave() {
     void auditionPitches(staff.instrument, staff.keySignature, pitches, seconds)
   }, [selectedId, selectedPitchIndex, staves])
 
+  // BPM curent, ținut într-un ref ca handler-ul MIDI (care nu se re-abonează la
+  // fiecare schimbare de tempo) să-l poată citi la zi pentru cuantizarea duratei
+  const midiBpmRef = useRef(120)
+  useEffect(() => {
+    midiBpmRef.current = playbackQuarterBpm(meta.tempo, meta.tempoBeat, meta.tempoBeatDotted, 100)
+  }, [meta])
+
   // intrare MIDI: o claviatură externă introduce note în portativul activ. O notă
   // = note-on cu nicio altă tastă ținută; tastele apăsate simultan (ținute) se
   // adaugă ca acord pe nota tocmai introdusă. Evenimentele sosesc doar când MIDI
   // e pornit din buton (vezi MidiButton). MIDI 60 = Do central → octava noastră 4.
+  //
+  // În modul „durata din cât ții clapa" (toggle din MidiButton), durata notei vine
+  // din timpul ținut: la eliberarea ULTIMEI taste a grupului, măsurăm secundele,
+  // le transformăm în bătăi la tempo-ul curent și aplicăm durata notabilă apropiată.
   useEffect(() => {
     const held = new Set<number>()
+    let groupStart = 0 // momentul (perf.now) la care a început grupul curent de note
+    let liveTimer: number | null = null // interval-ul de preview live al duratei
+    let lastLive: Duration | null = null // ultima durată trimisă live (anti-redundanță)
+
+    // durata notabilă pentru timpul ținut până acum (cuantizată la tempo-ul curent)
+    function heldDuration(): Duration {
+      const beats = (performance.now() - groupStart) / 1000 / (60 / midiBpmRef.current)
+      return quantizeBeatsToDuration(beats)
+    }
+    function stopLive() {
+      if (liveTimer !== null) window.clearInterval(liveTimer)
+      liveTimer = null
+      lastLive = null
+    }
+
     const offOn = onMidiNoteOn((midiNote) => {
       const pitch = semitoneToPitch(midiNote - 12)
-      if (held.size > 0) dispatch({ type: "addPitchToSelectedNote", pitch })
-      else dispatch({ type: "insertNoteWithPitch", pitch })
+      if (held.size > 0) {
+        dispatch({ type: "addPitchToSelectedNote", pitch })
+      } else {
+        groupStart = performance.now()
+        dispatch({ type: "insertNoteWithPitch", pitch })
+        // în modul „durata din cât ții clapa", actualizăm durata notei LIVE cât e
+        // ținută, ca s-o vezi transformându-se (optime → pătrime → doime → întreagă).
+        // Update-urile sunt `live` → amendează starea fără pași noi de undo.
+        if (isMidiDurationFromHold()) {
+          stopLive()
+          liveTimer = window.setInterval(() => {
+            const d = heldDuration()
+            if (d !== lastLive) {
+              lastLive = d
+              dispatch({ type: "setDuration", duration: d, live: true })
+            }
+          }, 60)
+        }
+      }
       held.add(midiNote)
     })
-    const offOff = onMidiNoteOff((midiNote) => held.delete(midiNote))
+    const offOff = onMidiNoteOff((midiNote) => {
+      const wasLast = held.size === 1 && held.has(midiNote)
+      held.delete(midiNote)
+      if (wasLast && isMidiDurationFromHold()) {
+        stopLive()
+        // durata finală, exactă, la eliberarea ultimei taste
+        dispatch({ type: "setDuration", duration: heldDuration(), live: true })
+      }
+    })
     return () => {
+      stopLive()
       offOn()
       offOff()
     }
@@ -1602,7 +1655,7 @@ export function InteractiveStave() {
             muted: mixer[s.id]?.muted ?? false,
           }))
           const headIdx = playedStaves.findIndex((s) => s.notes.some((n) => n.id === selectedId))
-          highlightPartIndex = headIdx >= 0 ? headIdx : 0
+          highlightPartIndex = longestPartIndex(parts, headIdx >= 0 ? headIdx : 0)
         } else {
           // portativele bifate (Ctrl+click) sau, fără bifare, toate
           const played = selectedStaffIds.length
@@ -1619,7 +1672,7 @@ export function InteractiveStave() {
             muted: mixer[s.id]?.muted ?? false,
           }))
           const activeAmong = played.findIndex((s) => s.id === activeStaffId)
-          highlightPartIndex = activeAmong >= 0 ? activeAmong : 0
+          highlightPartIndex = longestPartIndex(parts, activeAmong >= 0 ? activeAmong : 0)
         }
         setIsPlaying(true)
         void player.play(parts, bpm, {
@@ -1688,6 +1741,14 @@ export function InteractiveStave() {
       if (event.key.toLowerCase() === "p" && !hasModifier) {
         event.preventDefault()
         dispatch({ type: "toggleRest" })
+        return
+      }
+
+      // K comută modul de durată MIDI (durata din toolbar ↔ din cât ții clapa),
+      // doar când MIDI e pornit — în oglindă cu butonul ⏱ care apare doar atunci
+      if (event.key.toLowerCase() === "k" && !hasModifier && isMidiEnabled()) {
+        event.preventDefault()
+        setMidiDurationFromHold(!isMidiDurationFromHold())
         return
       }
 

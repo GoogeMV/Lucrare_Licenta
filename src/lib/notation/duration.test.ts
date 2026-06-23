@@ -6,6 +6,7 @@ import {
   smallerDuration,
   vexflowDurationCode,
   playbackQuarterBpm,
+  quantizeBeatsToDuration,
 } from "@/lib/notation/duration"
 
 describe("entryBeats", () => {
@@ -34,6 +35,24 @@ describe("tupletNormal", () => {
     expect(tupletNormal(5)).toBe(4)
     expect(tupletNormal(6)).toBe(4)
     expect(tupletNormal(2)).toBe(2)
+  })
+})
+
+describe("quantizeBeatsToDuration", () => {
+  it("alege durata de bază cea mai apropiată de numărul de bătăi", () => {
+    expect(quantizeBeatsToDuration(1)).toBe("quarter")
+    expect(quantizeBeatsToDuration(2)).toBe("half")
+    expect(quantizeBeatsToDuration(4)).toBe("whole")
+    expect(quantizeBeatsToDuration(0.5)).toBe("eighth")
+    expect(quantizeBeatsToDuration(0.25)).toBe("sixteenth")
+  })
+  it("rotunjește la cea mai apropiată valoare", () => {
+    expect(quantizeBeatsToDuration(0.9)).toBe("quarter") // ~1 timp
+    expect(quantizeBeatsToDuration(0.3)).toBe("sixteenth") // mai aproape de 0.25 decât de 0.5
+  })
+  it("clamp: foarte scurt → șaisprezecime, foarte lung → întreagă", () => {
+    expect(quantizeBeatsToDuration(0.01)).toBe("sixteenth")
+    expect(quantizeBeatsToDuration(99)).toBe("whole")
   })
 })
 

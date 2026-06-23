@@ -171,7 +171,7 @@ Tot stack-ul (Postgres + server + web) în containere, fără să instalezi nimi
 docker compose up --build
 ```
 
-- Web (frontend + proxy `/api`): http://localhost:8080
+- Web (frontend + proxy `/api`): http://localhost:8090
 - API (opțional, expus pentru depanare): http://localhost:4000
 - PostgreSQL: în container, cu volum persistent `pgdata`
 
@@ -242,7 +242,7 @@ Configurare reală (Stripe test) în `server/.env`:
 ```
 STRIPE_SECRET_KEY=sk_test_...     # cheia secretă de TEST
 STRIPE_PRICE_ID=price_...         # un Preț one-time, în mod test
-CLIENT_URL=http://localhost:5173  # (Docker: http://localhost:8080)
+CLIENT_URL=http://localhost:5173  # (Docker: http://localhost:8090)
 ```
 
 În dashboard-ul Stripe (mod Test): creează un **Product** cu un **Price one-time**,

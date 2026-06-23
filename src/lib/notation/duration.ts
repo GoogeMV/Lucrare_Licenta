@@ -128,6 +128,25 @@ export function smallerDuration(duration: Duration): Duration | null {
   return i >= 0 && i < DURATIONS.length - 1 ? DURATIONS[i + 1] : null
 }
 
+/**
+ * Cea mai apropiată valoare de notă (dintre cele de bază) pentru un număr de bătăi
+ * (pătrimi). Folosită la intrarea MIDI „după cât ții clapa": timpul ținut → bătăi →
+ * durata notabilă cea mai apropiată. Sub o șaisprezecime → șaisprezecime; peste o
+ * notă întreagă → întreagă.
+ */
+export function quantizeBeatsToDuration(beats: number): Duration {
+  let best: Duration = "quarter"
+  let bestDiff = Infinity
+  for (const d of DURATIONS) {
+    const diff = Math.abs(DURATION_BEATS[d] - beats)
+    if (diff < bestDiff) {
+      bestDiff = diff
+      best = d
+    }
+  }
+  return best
+}
+
 /** Durata efectivă a unei intrări, în pătrimi — punctul adaugă 50%, iar un
  *  tuplet o scalează cu normal/count (ex. optime de triolet = 0.5 × 2/3) */
 export function entryBeats(entry: { duration: Duration; dotted?: boolean; tuplet?: number }): number {
