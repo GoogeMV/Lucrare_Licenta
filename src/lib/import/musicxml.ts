@@ -14,7 +14,7 @@ import { nextGroupId, nextId, nextStaffId } from "@/state/scoreReducer"
 import { pitchIndex } from "@/lib/notation/pitch"
 import { decompose } from "@/lib/notation/measure"
 import { DYNAMICS } from "@/lib/notation/dynamics"
-import { KEY_SIGNATURES, keyFifths } from "@/lib/notation/keySignature"
+import { KEY_SIGNATURES, keyFifths, keyAccidentalMap } from "@/lib/notation/keySignature"
 
 /**
  * Import MusicXML (score-partwise) → modelul intern. Perechea exportului din
@@ -210,6 +210,8 @@ export function parseMusicXML(xml: string): ImportedScore {
       if (clefByStaff.size > 0) break
     }
 
+    // alterațiile armurii — referința față de care <alter> devine alterație explicită
+    const keyMap = keyAccidentalMap(keySignature)
     // câte portative are partida (pian = 2): după numerele de cheie
     const staffCount = Math.max(1, clefByStaff.size)
     const groupId = staffCount > 1 ? nextGroupId() : undefined
@@ -276,7 +278,7 @@ export function parseMusicXML(xml: string): ImportedScore {
         if (isChord && pitchEl) {
           const last = staff.notes[staff.notes.length - 1]
           if (last && last.type === "note") {
-            last.pitches = [...last.pitches, pitchFromEl(noteEl, pitchEl)].sort(
+            last.pitches = [...last.pitches, pitchFromEl(noteEl, pitchEl, keyMap)].sort(
               (a, b) => pitchIndex(a) - pitchIndex(b),
             )
           }
@@ -323,7 +325,7 @@ export function parseMusicXML(xml: string): ImportedScore {
         const entry: NoteEntry = {
           id: nextId(),
           type: restEl ? "rest" : "note",
-          pitches: restEl || !pitchEl ? [DISPLAY_REST] : [pitchFromEl(noteEl, pitchEl)],
+          pitches: restEl || !pitchEl ? [DISPLAY_REST] : [pitchFromEl(noteEl, pitchEl, keyMap)],
           duration,
           dotted: dotted || undefined,
           tuplet,
@@ -385,12 +387,27 @@ export function parseMusicXML(xml: string): ImportedScore {
 /** Poziția implicită de afișare a unei pauze (înlocuită la randare cu linia din mijloc) */
 const DISPLAY_REST: Pitch = { step: "B", octave: 4 }
 
-/** Înălțimea dintr-un element <note>: step + octave (+ alterația desenată explicit) */
-function pitchFromEl(noteEl: Element, pitchEl: Element): Pitch {
+/** Înălțimea dintr-un element <note>: step + octave + alterația care SUNĂ. */
+function pitchFromEl(
+  noteEl: Element,
+  pitchEl: Element,
+  keyMap: Partial<Record<Step, Pitch["accidental"]>>,
+): Pitch {
   const step = (kidText(pitchEl, "step") ?? "C") as Step
   const octave = Number(kidText(pitchEl, "octave") ?? "4")
+  // 1) alterația de AFIȘARE (<accidental>), dacă există — fișierele noastre o scriu mereu
   const accidentalText = kidText(noteEl, "accidental")
-  const accidental = accidentalText ? ACCIDENTAL_FROM_XML[accidentalText] : undefined
+  let accidental = accidentalText ? ACCIDENTAL_FROM_XML[accidentalText] : undefined
+  // 2) altfel, adevărul sonor e <alter> (element opțional de afișare vs. obligatoriu
+  //    la note alterate): unele exportoare omit <accidental>, iar alterațiile
+  //    persistente pe măsură nu-l repetă pe a doua notă. Modelul nostru nu are
+  //    persistență pe măsură, deci derivăm o alterație EXPLICITĂ ori de câte ori
+  //    sunetul diferă de armură (dublu-diez/bemol se aproximează la simplu).
+  if (!accidental) {
+    const alter = Math.round(Number(kidText(pitchEl, "alter") ?? "0"))
+    const fromAlter = alter > 0 ? "sharp" : alter < 0 ? "flat" : undefined
+    if (fromAlter !== keyMap[step]) accidental = fromAlter ?? "natural"
+  }
   return accidental ? { step, octave, accidental } : { step, octave }
 }
 

@@ -25,7 +25,7 @@ pură); UI-ul și randarea VexFlow se verifică manual.
 **Backend opțional** (cont + partituri în cloud): `server/` — Node/Express +
 PostgreSQL (`pg`). Rulare: `cd server && npm install && npm run dev` (vezi
 `server/README.md`); frontend-ul proxează `/api` → :4000. Tot stack-ul în
-containere: `docker compose up --build` (Postgres + server + web pe :8080).
+containere: `docker compose up --build` (Postgres + server + web pe :8090).
 
 ## Stack
 
@@ -83,3 +83,29 @@ Tailwind 4 + shadcn/base-ui. Alias `@/` → `src/`.
 - Click-ul pe portativ adaugă note DOAR pe liniile portativului (±8px); notele
   cu linii suplimentare se obțin cu ↑/↓ — cerință explicită a utilizatorului.
 - Punctul de prelungire (lângă cap, `dotted`) ≠ staccato (deasupra, articulație).
+
+## Backlog surse de citat — lucrarea scrisă (partea de documentație)
+
+> Titlul oficial (secretariat): **„Aplicație notare partitură"**. Numele aplicației:
+> **NotationSoft** (de clarificat la prima apariție în Introducere + Cap. 1).
+>
+> Convenție în text: placeholder `[Cheie]` (ex. `[MuseScore]`) acolo unde trebuie o
+> sursă. La FINAL: bibliografia se ordonează ALFABETIC, abia apoi `[Cheie]` →
+> `[1]`, `[2]`… (numerele urmează ordinea alfabetică, nu ordinea apariției).
+> Paginile web cer DATA ACCESĂRII. Tabelele comparative = „prelucrare proprie pe
+> baza [...]". Faptele au fost confirmate de utilizator; el adaugă URL-urile la final.
+
+| Cheie | Apare în | Ce sursă trebuie | Status |
+|---|---|---|---|
+| `[MuseScore]` | Cap. 1.2 (tabel + text) | site oficial musescore.org | de completat |
+| `[Sibelius]` | Cap. 1.2 | pagina oficială Avid Sibelius | de completat |
+| `[Dorico]` | Cap. 1.2 | pagina oficială Steinberg Dorico | de completat |
+| `[Finale]` | Cap. 1.2 | anunțul retragerii Finale (MakeMusic, 2024) | de completat |
+| `[Flat]` | Cap. 1.2 | site oficial flat.io | de completat |
+| `[Noteflight]` | Cap. 1.2 | site oficial noteflight.com | de completat |
+| `[Nielsen]` | Cap. 3.4.1 | euristicile de utilizabilitate Nielsen (NN/g) | de completat |
+
+Anticipate (de adăugat pe măsură ce scriem capitolele): `[MusicXML]` (Cap. 3/4),
+documentațiile oficiale ale tehnologiilor din Cap. 4 (React, TypeScript, Vite,
+VexFlow, Tone.js, Tailwind, Node/Express, PostgreSQL, JWT, bcrypt, Docker, Stripe),
+`[OWASP]` și `[RGPD]` (Cap. 5). Adaugă rânduri noi aici la fiecare placeholder nou.
