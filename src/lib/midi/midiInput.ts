@@ -13,10 +13,37 @@ type StateListener = (deviceNames: string[]) => void
 let access: MIDIAccess | null = null
 let inputs: MIDIInput[] = []
 let enabled = false
+/** Modul de durată: false = durata aleasă din toolbar; true = durata din cât ții clapa */
+let durationFromHold = false
 
 const noteOnListeners = new Set<NoteListener>()
 const noteOffListeners = new Set<NoteListener>()
 const stateListeners = new Set<StateListener>()
+const modeListeners = new Set<(fromHold: boolean) => void>()
+
+/** Intrarea MIDI e pornită (din buton)? */
+export function isMidiEnabled(): boolean {
+  return enabled
+}
+
+/** Durata notelor MIDI vine din cât ții clapa apăsată (cuantizată la tempo)? */
+export function isMidiDurationFromHold(): boolean {
+  return durationFromHold
+}
+
+/** Comută modul de durată (manual ↔ din cât ții clapa) și anunță abonații. */
+export function setMidiDurationFromHold(value: boolean) {
+  durationFromHold = value
+  modeListeners.forEach((fn) => fn(value))
+}
+
+/** Abonare la schimbarea modului de durată (pentru UI-ul butonului). */
+export function onMidiModeChange(fn: (fromHold: boolean) => void): () => void {
+  modeListeners.add(fn)
+  return () => {
+    modeListeners.delete(fn)
+  }
+}
 
 /** Browserul suportă Web MIDI? (Chrome/Edge da; Firefox/Safari parțial sau deloc) */
 export function isMidiSupported(): boolean {

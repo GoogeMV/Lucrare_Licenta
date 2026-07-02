@@ -26,14 +26,6 @@ export const DURATION_LABELS: Record<Duration, string> = {
   sixteenth: "Șaisprezecime",
 }
 
-export const DURATION_SYMBOLS: Record<Duration, string> = {
-  whole: "𝅝",
-  half: "𝅗𝅥",
-  quarter: "♩",
-  eighth: "♪",
-  sixteenth: "𝅘𝅥𝅯",
-}
-
 export const DURATIONS: Duration[] = ["whole", "half", "quarter", "eighth", "sixteenth"]
 
 /** Valorile de notă oferite ca unitate de bătaie pentru indicația de tempo
@@ -98,14 +90,6 @@ export const REST_HOTKEYS: Record<string, Duration> = {
   g: "sixteenth",
 }
 
-export const REST_HOTKEY_LABELS: Record<Duration, string> = {
-  whole: "A",
-  half: "S",
-  quarter: "D",
-  eighth: "F",
-  sixteenth: "G",
-}
-
 /** Codul de durată VexFlow pentru o intrare — adaugă sufixul "r" pentru pauze (ex. "qr") */
 export function vexflowDurationCode(duration: Duration, isRest: boolean): string {
   const base = DURATION_TO_VEXFLOW[duration]
@@ -126,6 +110,25 @@ export function tupletNormal(count: number): number {
 export function smallerDuration(duration: Duration): Duration | null {
   const i = DURATIONS.indexOf(duration)
   return i >= 0 && i < DURATIONS.length - 1 ? DURATIONS[i + 1] : null
+}
+
+/**
+ * Cea mai apropiată valoare de notă (dintre cele de bază) pentru un număr de bătăi
+ * (pătrimi). Folosită la intrarea MIDI „după cât ții clapa": timpul ținut → bătăi →
+ * durata notabilă cea mai apropiată. Sub o șaisprezecime → șaisprezecime; peste o
+ * notă întreagă → întreagă.
+ */
+export function quantizeBeatsToDuration(beats: number): Duration {
+  let best: Duration = "quarter"
+  let bestDiff = Infinity
+  for (const d of DURATIONS) {
+    const diff = Math.abs(DURATION_BEATS[d] - beats)
+    if (diff < bestDiff) {
+      bestDiff = diff
+      best = d
+    }
+  }
+  return best
 }
 
 /** Durata efectivă a unei intrări, în pătrimi — punctul adaugă 50%, iar un

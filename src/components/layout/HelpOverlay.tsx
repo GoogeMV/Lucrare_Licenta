@@ -77,6 +77,7 @@ const SECTIONS: Section[] = [
       ["buton MIDI", "pornește o claviatură externă (Chrome/Edge)"],
       ["o tastă", "introduce nota în portativul activ"],
       ["taste ținute", "acord pe nota curentă"],
+      ["buton ⏱ / K", "durata notei = cât ții clapa apăsată (altfel, durata din toolbar)"],
     ],
   },
 ]

@@ -236,7 +236,8 @@ function ExportMenu() {
     link.href = url
     link.download = `${fileBase()}.${extension}`
     link.click()
-    URL.revokeObjectURL(url)
+    // revocarea se amână: sincron, unele browsere pot anula descărcarea abia pornită
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   // portativele de exportat după selecția curentă (instrumente + interval măsuri)

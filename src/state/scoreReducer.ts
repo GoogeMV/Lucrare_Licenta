@@ -164,7 +164,7 @@ export type ScoreAction =
   | { type: "insertNoteWithPitch"; pitch: Pitch }
   | { type: "addPitchToSelectedNote"; pitch: Pitch }
   | { type: "insertRest"; duration: Duration }
-  | { type: "setDuration"; duration: Duration }
+  | { type: "setDuration"; duration: Duration; live?: boolean }
   | { type: "transposeSelected"; direction: "up" | "down" }
   | { type: "toggleAccidental"; accidental: Accidental }
   | { type: "toggleArticulation"; articulation: Articulation }
@@ -920,6 +920,9 @@ export function scoreReducer(state: ScoreState, action: ScoreAction): ScoreState
     }
 
     case "loadScore": {
+      // gardă: o partitură fără portative (payload corupt din localStorage / import
+      // malformat) ar strica starea (accesăm staves[0]) — o ignorăm
+      if (!Array.isArray(action.staves) || action.staves.length === 0) return state
       // adusă din localStorage — aliniem contoarele de id-uri ca să nu generăm
       // duplicate (generatoarele sunt efectele secundare asumate ale modulului)
       syncIdCounters(action.staves)
@@ -1009,6 +1012,11 @@ export function historyReducer(history: HistoryState, action: HistoryAction): Hi
 
   const present = scoreReducer(history.present, action)
   if (present === history.present) return history
+
+  // actualizările „live" (previzualizarea duratei cât ții clapa MIDI) doar amendează
+  // starea curentă, fără pas nou de undo — toată „creșterea" notei rămâne un singur
+  // pas (cel al inserării), nu unul pentru fiecare optime → pătrime → doime…
+  if (action.type === "setDuration" && action.live) return { ...history, present }
 
   const contentChanged =
     present.staves !== history.present.staves ||

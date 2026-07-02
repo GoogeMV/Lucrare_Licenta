@@ -8,6 +8,7 @@ import { playbackQuarterBpm } from "@/lib/notation/duration"
 import { expandRepeats } from "@/lib/notation/measure"
 import { measureQuarters } from "@/lib/notation/timeSignature"
 import { Metronome } from "@/lib/audio/metronome"
+import { longestPartIndex } from "@/lib/audio/playback"
 import { emitPlaybackHighlight } from "@/lib/audio/playbackHighlight"
 
 const CLEF_SHORT: Record<string, string> = { treble: "sol", bass: "fa", alto: "do" }
@@ -108,9 +109,11 @@ export function TransportBar() {
       volume: mixer[s.id]?.volume ?? 1,
       muted: mixer[s.id]?.muted ?? false,
     }))
-    // evidențiem portativul activ dacă e printre cele redate, altfel primul redat
+    // cursorul urmărește portativul care se termină ULTIMUL (preferând cel activ
+    // la egalitate), ca să alunece până la finalul real, nu doar până se termină
+    // un instrument mai scurt
     const activeAmongPlayed = played.findIndex((s) => s.id === activeStaffId)
-    const highlightPartIndex = activeAmongPlayed >= 0 ? activeAmongPlayed : 0
+    const highlightPartIndex = longestPartIndex(parts, activeAmongPlayed >= 0 ? activeAmongPlayed : 0)
     // dacă eram pe pauză, reluăm din punctul reținut (altfel de la 0)
     const startOffset = player.resumeOffset
     // play() se rezolvă după programarea notelor (include descărcarea eșantioanelor)

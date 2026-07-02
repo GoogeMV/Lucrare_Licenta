@@ -41,6 +41,33 @@ export interface PlaybackOptions {
 // în viitor față de ceasul AudioContext (altfel Tone refuză timpii din trecut)
 const LEAD_SECONDS = 0.1
 
+/** Numărul total de bătăi (durata) unui portativ */
+function partTotalBeats(part: PlaybackPart): number {
+  return part.notes.reduce((sum, entry) => sum + entryBeats(entry), 0)
+}
+
+/**
+ * Indexul portativului care se termină ULTIMUL (cele mai multe bătăi). Cursorul de
+ * redare îl urmărește, ca să alunece până la finalul REAL al piesei — altfel, dacă
+ * ar urmări un instrument mai scurt, s-ar opri când acela termină, deși restul mai
+ * cântă. La egalitate de durată păstrăm portativul preferat (ex. cel activ).
+ */
+export function longestPartIndex(parts: PlaybackPart[], prefer = 0): number {
+  let bestIdx = 0
+  let bestBeats = -1
+  parts.forEach((part, i) => {
+    const beats = partTotalBeats(part)
+    if (beats > bestBeats) {
+      bestBeats = beats
+      bestIdx = i
+    }
+  })
+  if (prefer >= 0 && prefer < parts.length && partTotalBeats(parts[prefer]) >= bestBeats) {
+    return prefer
+  }
+  return bestIdx
+}
+
 /**
  * Redă o listă de note cu Tone.js. Modelul fiind monofonic (o singură voce),
  * notele sunt programate secvențial pe ceasul audio, iar evidențierea vizuală

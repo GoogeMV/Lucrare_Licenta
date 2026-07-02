@@ -62,7 +62,9 @@ router.post(
 router.post(
   "/confirm",
   wrap(async (req, res) => {
-    if (!stripe) return notConfigured(res)
+    if (!stripe) {
+      return res.status(503).json({ error: "Stripe nu e configurat — folosește plata simulată." })
+    }
     const sessionId = String(req.body?.sessionId || "")
     if (!sessionId) return res.status(400).json({ error: "Lipsește sesiunea de plată" })
 
